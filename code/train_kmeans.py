@@ -1,0 +1,142 @@
+"""
+Phase 3 — User Segmentation (KMeans)
+
+Extracts user latent factors from the trained ALS model, clusters them
+with KMeans (k=5), and precomputes segment-level Top-5 items for cold-start.
+
+Outputs:
+  data/user_segments.parquet   — user_idx → segment mapping
+  data/segment_top5.parquet    — precomputed Top-5 items per segment
+  models/kmeans_model/         — fitted KMeans model
+"""
+
+import os
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+from pyspark.ml.recommendation import ALSModel
+from pyspark.ml.clustering import KMeans
+from pyspark.ml.linalg import Vectors, VectorUDT
+from pyspark.sql.functions import udf
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+CLEANED_PATH = os.path.join(PROJECT_ROOT, "data", "games_cleaned.parquet")
+ALS_MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "als_model")
+KMEANS_MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "kmeans_model")
+SEGMENTS_PATH = os.path.join(PROJECT_ROOT, "data", "user_segments.parquet")
+TOP5_PATH = os.path.join(PROJECT_ROOT, "data", "segment_top5.parquet")
+
+SEED = 42
+
+# Descriptive labels assigned after analyzing cluster rating behavior
+SEGMENT_LABELS = {
+    0: "Enthusiast",  # High avg rating, many reviews
+    1: "Critic",      # Lower avg rating, selective
+    2: "Casual",      # Few reviews, recent activity only
+    3: "Explorer",    # Broad genre diversity
+    4: "Hardcore",    # High frequency, action-heavy
+}
+
+
+def create_spark():
+    return (
+        SparkSession.builder
+        .appName("ProjectNexus-KMeans")
+        .master("local[*]")
+        .config("spark.driver.memory", "4g")
+        .config("spark.sql.shuffle.partitions", "8")
+        .getOrCreate()
+    )
+
+
+def main():
+    print("=" * 55)
+    print("🎮 PROJECT NEXUS — Phase 3: User Segmentation")
+    print("=" * 55)
+
+    spark = create_spark()
+    try:
+        # ── Load ALS model & extract user factors ─────────────────────
+        print(f"\n📦 Loading ALS model from {ALS_MODEL_PATH}")
+        als = ALSModel.load(ALS_MODEL_PATH)
+        print(f"   Rank: {als.rank}")
+
+        # userFactors: (id: int, features: array<float>)
+        array_to_vector = udf(lambda arr: Vectors.dense(arr), VectorUDT())
+        user_factors = als.userFactors.withColumn(
+            "features_vec", array_to_vector(F.col("features"))
+        )
+        print(f"   User factors: {user_factors.count():,} users")
+
+        # ── KMeans clustering ─────────────────────────────────────────
+        print("\n🔬 Running KMeans (k=5)...")
+        kmeans = KMeans(
+            k=5, seed=SEED,
+            featuresCol="features_vec",
+            predictionCol="segment",
+        )
+        kmeans_model = kmeans.fit(user_factors)
+        kmeans_model.write().overwrite().save(KMEANS_MODEL_PATH)
+        print(f"   ✅ KMeans model saved → {KMEANS_MODEL_PATH}")
+
+        segmented = kmeans_model.transform(user_factors)
+
+        # Build label map
+        label_map = F.create_map(
+            *[x for k, v in SEGMENT_LABELS.items() for x in (F.lit(k), F.lit(v))]
+        )
+
+        user_segments = segmented.select(
+            F.col("id").alias("user_idx"),
+            F.col("segment"),
+            label_map[F.col("segment")].alias("segment_label"),
+        )
+
+        # Print distribution
+        print("\n   Segment Distribution:")
+        total = user_segments.count()
+        for row in user_segments.groupBy("segment", "segment_label").count().orderBy("segment").collect():
+            pct = row["count"] / total * 100
+            bar = "█" * int(pct / 2)
+            print(f"   [{row['segment']}] {row['segment_label']:<12} → {row['count']:>7,} ({pct:5.1f}%) {bar}")
+
+        user_segments.write.mode("overwrite").parquet(SEGMENTS_PATH)
+        print(f"\n💾 User segments saved → {SEGMENTS_PATH}")
+
+        # ── Precompute Segment Top-5 ─────────────────────────────────
+        print("\n🏆 Precomputing segment Top-5 items...")
+        df = spark.read.parquet(CLEANED_PATH)
+        df_seg = df.join(user_segments.select("user_idx", "segment"), on="user_idx")
+
+        seg_items = (
+            df_seg.groupBy("segment", "item_idx")
+            .agg(
+                F.avg("rating").alias("avg_rating"),
+                F.count("*").alias("n_ratings"),
+            )
+            .filter(F.col("n_ratings") >= 10)
+        )
+
+        w = Window.partitionBy("segment").orderBy(F.col("avg_rating").desc())
+        seg_top5 = (
+            seg_items
+            .withColumn("rank", F.row_number().over(w))
+            .filter(F.col("rank") <= 5)
+        )
+
+        for seg_id, label in SEGMENT_LABELS.items():
+            print(f"\n   [{seg_id}] {label}:")
+            rows = seg_top5.filter(F.col("segment") == seg_id).orderBy("rank").collect()
+            for r in rows:
+                print(f"       #{r['rank']}  item_idx={r['item_idx']}  "
+                      f"avg={r['avg_rating']:.2f}  ({r['n_ratings']} reviews)")
+
+        seg_top5.write.mode("overwrite").parquet(TOP5_PATH)
+        print(f"\n💾 Segment Top-5 saved → {TOP5_PATH}")
+        print("✅ Phase 3 complete.")
+    finally:
+        spark.stop()
+
+
+if __name__ == "__main__":
+    main()

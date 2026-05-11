@@ -1,172 +1,87 @@
-# 🎮 Project Nexus — Real-Time Game Recommender
+# 🎮 Project Nexus — Real-Time Game Recommendation System
 
-An end-to-end Big Data pipeline for a video game recommendation system. Features real-time event streaming via Kafka, Spark Structured Streaming for windowed analytics, and a hybrid recommendation engine combining ALS collaborative filtering with KMeans user segmentation.
+An end-to-end Big Data pipeline for personalized video game recommendations. This system leverages **Apache Spark** for batch training and structured streaming, **Kafka** for event-driven data ingestion, and **Streamlit** for a real-time HUD dashboard.
 
-## 📋 Table of Contents
-- [Architecture](#architecture)
-- [Dataset](#dataset)
-- [Project Structure](#project-structure)
-- [Setup & Installation](#setup--installation)
-- [Running the Pipeline](#running-the-pipeline)
-- [Phase Details](#phase-details)
-- [Design Policies](#design-policies)
-- [Live Dashboard](#live-dashboard)
+## 🏗️ System Architecture
 
----
-
-## 🏗️ Architecture
+The project is designed as a modular pipeline where batch-trained ML models are integrated into a low-latency streaming environment:
 
 ```mermaid
 graph TD
-    HF[HuggingFace Dataset] --> P1[Phase 1: Preprocessing]
-    P1 --> P2[Phase 2: ALS Training]
-    P2 --> P3[Phase 3: KMeans Segmentation]
+    HF[HuggingFace: Amazon-Reviews-2023] --> PRE[Preprocessing & Indexing]
+    PRE --> CLEAN[Cleaned Parquet Data]
     
-    P3 --> P4[Phase 4: Kafka Producer]
-    P4 -->|JSON Events| P5[Phase 5: Streaming Pipeline]
+    CLEAN --> ALS[ALS Matrix Factorization]
+    ALS --> KM[KMeans User Segmentation]
     
-    P5 -->|Memory Sinks| P7[Phase 7: Streamlit Dashboard]
-    P2 -->|ALS Model| P6[Phase 6: Rec Engine]
-    P3 -->|Segments| P6
-    P5 -->|Batch Data| P6
+    KM --> FALL[Precomputed Segment Fallbacks]
+    ALS --> MODEL[ALS Recommendation Model]
+    
+    CLEAN --> PROD[Kafka Producer: Replay Simulation]
+    PROD --> KAF[Kafka Topic: game-events]
+    
+    KAF --> STR[Spark Structured Streaming]
+    MODEL --> STR
+    FALL --> STR
+    
+    STR --> DASH[Streamlit HUD Dashboard]
+    STR --> GHP[GitHub Pages: Static Prototype]
 ```
 
----
+### Core Architecture Components
 
-## 📊 Dataset
+- **Data Ingestion & Preprocessing**: Loads the `raw_review_Video_Games` subset from HuggingFace. Performs deduplication, cleaning, and string indexing to map user/item IDs to integer indices required by ALS.
+- **Collaborative Filtering (ALS)**: Trains an Alternating Least Squares model. Includes hyperparameter tuning via grid search to minimize RMSE.
+- **Personalized Segmentation (KMeans)**: Extracts user latent factors from the ALS model and clusters users into five distinct behavioral segments (e.g., Enthusiast, Critic, Hardcore).
+- **Event Streaming (Kafka)**: A producer simulates a real-time event stream by replaying cleaned dataset records. It features user-based partitioning (`user_idx % 2`) to ensure ordering and user-locality.
+- **Structured Streaming Pipeline**: Processes the Kafka stream with a 30s sliding window and 15s watermark. Handles JSON parsing, dead-letter routing for malformed data, and real-time engagement scoring.
+- **Recommendation Engine**: Integrates models into the stream. It provides ALS predictions for known users and falls back to segment-based "Top-5" items for cold-start users.
+- **HUD Dashboards**: 
+    - **Live Dashboard**: A Streamlit app with a "Gaming HUD" aesthetic, featuring glassmorphism, neon accents, and real-time Plotly charts.
+    - **Static Prototype**: A GitHub Pages-hosted HUD (`dashboard/index.html`) using Chart.js to visualize the design system.
 
-**McAuley-Lab/Amazon-Reviews-2023**
+## 📊 Dataset Specifications
+
+The system utilizes the **McAuley-Lab/Amazon-Reviews-2023** dataset:
 - **Source**: HuggingFace (`raw_review_Video_Games`)
-- **Scale**: ~5M+ records (filtered during preprocessing)
-- **Schema**: `user_id`, `parent_asin` (item_id), `rating` (1-5), `timestamp` (Unix ms)
-
----
+- **Focus**: 5-core reviews (high density)
+- **Features**: `user_id`, `parent_asin` (item_id), `rating`, and `timestamp`.
 
 ## 📁 Project Structure
 
 ```
 project-nexus/
-├── data/
-│   ├── games_cleaned.parquet   ← output of Phase 1
-│   ├── user_segments.parquet   ← output of Phase 3
-│   └── segment_top5.parquet    ← output of Phase 3
-├── models/
-│   ├── user_indexer/           ← fitted StringIndexer (Phase 1)
-│   ├── item_indexer/           ← fitted StringIndexer (Phase 1)
-│   ├── als_model/              ← trained ALS (Phase 2)
-│   └── kmeans_model/           ← trained KMeans (Phase 3)
 ├── code/
-│   ├── preprocessing.py        ← Phase 1
-│   ├── train_als.py            ← Phase 2
-│   ├── train_kmeans.py         ← Phase 3
-│   ├── kafka_producer.py       ← Phase 4
-│   ├── streaming_pipeline.py   ← Phase 5
-│   ├── recommendation_engine.py← Phase 6
-│   └── dashboard.py            ← Phase 7 (Streamlit HUD)
-├── dashboard/
-│   └── index.html              ← Static HUD prototype (GitHub Pages)
-├── requirements.txt
-└── README.md
+│   ├── preprocessing.py         # Data cleaning & StringIndexing
+│   ├── train_als.py             # ALS model training & tuning
+│   ├── train_kmeans.py          # User segmentation & fallback precomputation
+│   ├── kafka_producer.py        # Replay-based simulator with fault injection
+│   ├── streaming_pipeline.py    # Structured Streaming & windowed analytics
+│   ├── recommendation_engine.py # ML + Streaming integration logic
+│   └── dashboard.py             # Streamlit HUD Dashboard
+├── models/                      # Saved ML artifacts & indexers
+├── data/                        # Cleaned data & segment metadata
+├── dashboard/                   # Static HUD prototype (GitHub Pages)
+└── requirements.txt             # Project dependencies
 ```
 
----
+## 📐 Data Handling Policies
 
-## ⚙️ Setup & Installation
-
-### 1. Prerequisites
-- Python 3.10+
-- Java 8/11 (for Spark)
-- Apache Kafka (running on `localhost:9092`)
-
-### 2. Install Dependencies
-```bash
-pip install -r requirements.txt
-```
-
-### 3. Start Infrastructure (Kafka)
-```bash
-# Start Zookeeper
-zookeeper-server-start.sh config/zookeeper.properties
-
-# Start Kafka Broker
-kafka-server-start.sh config/server.properties
-```
-
----
-
-## 🚀 Running the Pipeline
-
-Execute phases in order across separate terminals:
-
-```bash
-# STEP 1: Build Models & Data
-python code/preprocessing.py
-python code/train_als.py
-python code/train_kmeans.py
-
-# STEP 2: Start Stream (Terminal 1)
-python code/kafka_producer.py
-
-# STEP 3: Start Pipeline (Terminal 2)
-python code/streaming_pipeline.py
-
-# STEP 4: Start Rec Engine (Terminal 3)
-python code/recommendation_engine.py
-
-# STEP 5: Start Dashboard (Terminal 4)
-streamlit run code/dashboard.py
-```
-
----
-
-## 📝 Phase Details
-
-### Phase 1 — Preprocessing
-- Downloads directly from HuggingFace.
-- Cleans data: drops nulls, filters ratings (1.0-5.0), deduplicates (keeps most recent).
-- Fits `StringIndexer` models for both users and items to ensure consistent integer mapping across the pipeline.
-
-### Phase 2 — ALS Training
-- Trains Alternating Least Squares on `(user_idx, item_idx, rating)`.
-- Implements hyperparameter grid search (Rank: 10-50, Reg: 0.01-0.5) if initial RMSE > 1.5.
-
-### Phase 3 — KMeans Segmentation
-- Extracts user latent factors from the ALS model.
-- Clusters users into 5 segments (Enthusiast, Critic, Casual, Explorer, Hardcore).
-- Precomputes segment-level Top-5 items for robust cold-start fallback.
-
-### Phase 4 — Kafka Producer
-- Replay-based simulator with 2 partitions (`user_idx % 2`).
-- Fault injection: 15% cold-start users, 5% malformed records.
-
-### Phase 5 — Streaming Pipeline
-- Spark Structured Streaming with safe JSON parsing and dead-letter routing.
-- Window analytics (30s window / 10s slide).
-- 15s Watermark policy (Late data dropped to prevent window skew).
-
-### Phase 6 — Recommendation Engine
-- Hybrid Logic:
-  1. **Known Users**: ALS predictions filtered by user segment.
-  2. **Cold-Start (Known Segment)**: Segment-level Top-5 items.
-  3. **Cold-Start (New User)**: Global trending items from the live stream.
-- Latency Target: **< 5 seconds** per request.
-
-### Phase 7 — Dashboard
-- Real-time HUD (Heads-Up Display) built with Streamlit.
-- Features: Throughput, Latency, Trending Leaderboard, Personalized Recommendations, and a Terminal Alert Feed.
-
----
-
-## 📐 Design Policies
-
+### Late Data & Watermarking
 | Parameter | Value | Rationale |
 |-----------|-------|-----------|
-| Watermark | 15s | Half of slide (10s); late data cannot fill complete slides. |
-| Partitioning | `user_idx % 2` | Ensures user-locality for stateful operations. |
-| Cold-Start | Hybrid | Segment fallback for known archetypes; trending for absolute unknowns. |
+| Watermark | 15 seconds | Late data (>15s) is dropped to prevent skewed window aggregates. |
+| Window Size | 30 seconds | Captures meaningful activity bursts for trending detection. |
+| Slide Interval| 10 seconds | Ensures the dashboard reflects fresh data every 10 seconds. |
 
----
+### Cold-Start Policy
+- **Primary**: ALS collaborative filtering for known users.
+- **Fallback**: Segment-based majority vote based on user interaction history.
+- **New Users**: Global trending items based on the current 30s streaming window.
 
-## 🌐 Live Dashboard
-A static prototype of the Gaming HUD is hosted on GitHub Pages:
-[https://cludoy.github.io/Mini-project3/](https://cludoy.github.io/Mini-project3/)
+## ⚙️ Environment & Setup
+
+- **Python**: 3.10+
+- **Frameworks**: PySpark 3.5, Kafka-python 2.0, Streamlit 1.35
+- **Infrastructure**: Kafka broker at `localhost:9092`, Spark master at `local[*]`
+- **SLA**: Target recommendation latency < 5.0 seconds.

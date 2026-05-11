@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Real-Time ALS Recommender — Live Dashboard</title>
+<meta name="description" content="Real-time game recommendation dashboard powered by Apache Spark, Kafka, and ALS collaborative filtering.">
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Anybody:wght@400;700;800;900&family=Inter:wght@400;700&family=JetBrains+Mono:wght@400;500;700&family=Roboto+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<script>
+tailwind.config = {
+    darkMode: "class",
+    theme: {
+        extend: {
+            colors: {
+                "border-muted": "#2D333B",
+                "critical-red": "#FF3366",
+                "surface": "#0c150f",
+                "on-surface": "#dae5da",
+                "surface-dim": "#0c150f",
+                "primary": "#f4fff3",
+                "surface-slate": "#151A22",
+                "background": "#0c150f",
+                "outline": "#849587",
+                "primary-fixed-dim": "#00e38b",
+                "primary-container": "#00ff9d",
+                "bg-void": "#0B0E14",
+                "surface-container-lowest": "#07100a",
+                "surface-container-low": "#141e17",
+                "surface-container": "#18221b",
+                "surface-container-high": "#232c25",
+                "surface-container-highest": "#2d3730",
+                "on-surface-variant": "#b9cbbc",
+                "outline-variant": "#3b4a3f",
+                "text-secondary": "#8B949E",
+            },
+            fontFamily: {
+                "headline-lg": ["Anybody"],
+                "body-md": ["Inter"],
+                "label-sm": ["JetBrains Mono"],
+                "terminal-md": ["JetBrains Mono"],
+                "metric-mono": ["JetBrains Mono"],
+            }
+        }
+    }
+};
+</script>
+<style>
+@keyframes scanline {
+    0% { transform: translateY(-100%); }
+    100% { transform: translateY(100vh); }
+}
+.scanline-overlay::after {
+    content: "";
+    position: fixed; top: 0; left: 0; width: 100%; height: 4px;
+    background: rgba(0, 255, 157, 0.015);
+    z-index: 100; pointer-events: none;
+    animation: scanline 12s linear infinite;
+}
+.grid-bg {
+    background-image:
+        linear-gradient(to right, rgba(0, 255, 157, 0.02) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(0, 255, 157, 0.02) 1px, transparent 1px);
+    background-size: 40px 40px;
+}
+.glass-card {
+    background: rgba(12, 21, 15, 0.8);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+.glow-mint {
+    box-shadow: 0 0 10px rgba(0, 255, 157, 0.1), inset 0 0 5px rgba(0, 255, 157, 0.05);
+}
+.text-glow-mint {
+    text-shadow: 0 0 8px rgba(0, 255, 157, 0.4);
+}
+.glitch-border {
+    position: relative;
+    border: 1px solid rgba(0, 255, 157, 0.3);
+}
+.glitch-border::before {
+    content: "";
+    position: absolute; top: -1px; left: 10%;
+    width: 15px; height: 2px; background: #00ff9d;
+}
+.glitch-border::after {
+    content: "";
+    position: absolute; bottom: -1px; right: 15%;
+    width: 25px; height: 2px; background: #00ff9d;
+}
+@keyframes pulse-glow {
+    0%, 100% { opacity: 1; box-shadow: 0 0 6px #00ff9d; }
+    50% { opacity: 0.4; box-shadow: 0 0 2px #00ff9d; }
+}
+.dot-pulse {
+    animation: pulse-glow 2s infinite;
+}
+</style>
+</head>
+<body class="bg-surface-container-lowest text-on-surface min-h-screen flex flex-col font-body-md overflow-x-hidden scanline-overlay">
+<div class="fixed inset-0 grid-bg pointer-events-none z-0"></div>
+
+<!-- Header -->
+<header class="bg-surface-container-lowest/90 backdrop-blur-md flex justify-between items-center w-full px-4 md:px-8 h-16 shrink-0 top-0 border-b border-primary-container/30 z-40 relative glow-mint">
+    <div class="font-headline-lg text-xl md:text-2xl uppercase tracking-tighter text-primary-container text-glow-mint italic">
+        Real-Time ALS Recommender
+    </div>
+    <div class="flex items-center gap-6">
+        <div class="flex items-center gap-2 bg-black/40 px-3 py-1 rounded border border-primary-container/30">
+            <span class="w-2 h-2 rounded-full bg-primary-container dot-pulse"></span>
+            <span class="font-label-sm text-primary-container tracking-widest text-xs">KAFKA STREAM: LIVE</span>
+        </div>
+        <button class="text-primary-container/70 hover:text-primary-container transition-colors duration-200">
+            <span class="material-symbols-outlined text-[28px]">sensors</span>
+        </button>
+    </div>
+</header>
+
+<!-- Main -->
+<main class="flex-1 p-4 md:p-8 flex flex-col gap-4 pb-24 relative z-10">
+
+    <!-- Metrics Row -->
+    <section class="grid grid-cols-1 md:grid-cols-3 gap-4" id="metrics-row">
+        <div class="glass-card rounded-none border border-primary-container/20 p-6 flex flex-col gap-2 relative overflow-hidden group hover:border-primary-container/50 transition-colors glow-mint">
+            <div class="absolute top-0 left-0 w-1 h-full bg-primary-container"></div>
+            <h2 class="font-label-sm uppercase text-outline tracking-widest text-[10px]">Throughput (Events/sec)</h2>
+            <div class="font-metric-mono text-4xl text-primary-container font-bold text-glow-mint" id="throughput-value">14,205</div>
+            <div class="font-terminal-md text-primary-container mt-2 flex items-center gap-1 italic text-sm">
+                <span class="material-symbols-outlined text-[14px]">trending_up</span> <span id="throughput-delta">+2.4% last 60s</span>
+            </div>
+        </div>
+        <div class="glass-card rounded-none border border-primary-container/20 p-6 flex flex-col gap-2 relative overflow-hidden group hover:border-primary-container/50 transition-colors glow-mint">
+            <div class="absolute top-0 left-0 w-1 h-full bg-primary-container"></div>
+            <h2 class="font-label-sm uppercase text-outline tracking-widest text-[10px]">Pipeline Latency (&lt;5s)</h2>
+            <div class="font-metric-mono text-4xl text-primary-container font-bold text-glow-mint" id="latency-value">3.14s</div>
+            <div class="font-terminal-md text-on-surface-variant mt-2 opacity-70 text-sm" id="latency-pct">p99: 4.8s // p95: 3.5s</div>
+        </div>
+        <div class="glass-card rounded-none border border-primary-container/20 p-6 flex flex-col gap-2 relative overflow-hidden group hover:border-primary-container/50 transition-colors glow-mint">
+            <div class="absolute top-0 left-0 w-1 h-full bg-primary-container"></div>
+            <h2 class="font-label-sm uppercase text-outline tracking-widest text-[10px]">Active Window Users</h2>
+            <div class="font-metric-mono text-4xl text-on-surface font-bold" id="users-value">8,942</div>
+            <div class="font-terminal-md text-on-surface-variant mt-2 flex items-center gap-1 italic text-sm">
+                <span class="text-primary-container">●</span> Segment: Global
+            </div>
+        </div>
+    </section>
+
+    <!-- Middle 50/50 -->
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <!-- Trending -->
+        <div class="glass-card border border-outline-variant/30 p-6 flex flex-col gap-4">
+            <div class="border-b border-primary-container/20 pb-3 flex justify-between items-end">
+                <h2 class="font-label-sm uppercase text-primary-container tracking-[0.2em] text-[11px]">Trending Items (Global Window)</h2>
+                <span class="font-label-sm text-primary-container animate-pulse text-[10px]">UPDATING...</span>
+            </div>
+            <div class="flex flex-col" id="trending-list"></div>
+        </div>
+        <!-- Recommendations -->
+        <div class="glass-card border border-outline-variant/30 p-6 flex flex-col gap-4">
+            <div class="border-b border-primary-container/20 pb-3 flex justify-between items-end">
+                <h2 class="font-label-sm uppercase text-primary-container tracking-[0.2em] text-[11px]" id="rec-title">Recommended for User #8472</h2>
+                <span class="font-label-sm text-outline-variant text-[10px]">ALS MODEL: V2.1</span>
+            </div>
+            <div class="flex flex-col" id="rec-list"></div>
+        </div>
+    </section>
+
+    <!-- Charts Row -->
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div class="glass-card border border-outline-variant/30 p-6">
+            <h2 class="font-label-sm uppercase text-outline tracking-[0.3em] mb-4 text-center text-[10px]">Rating Distribution</h2>
+            <canvas id="ratingChart" height="200"></canvas>
+        </div>
+        <div class="glass-card border border-outline-variant/30 p-6">
+            <h2 class="font-label-sm uppercase text-outline tracking-[0.3em] mb-4 text-center text-[10px]">Engagement Score · Top Items</h2>
+            <canvas id="engagementChart" height="200"></canvas>
+        </div>
+    </section>
+
+    <!-- User Activity Timeline -->
+    <section class="glass-card border border-outline-variant/30 p-6">
+        <h2 class="font-label-sm uppercase text-outline tracking-[0.3em] mb-4 text-center text-[10px]">User Activity Timeline (30s Window)</h2>
+        <canvas id="activityChart" height="150"></canvas>
+    </section>
+
+    <!-- Terminal -->
+    <section class="mt-2">
+        <h2 class="font-label-sm uppercase text-outline tracking-[0.3em] mb-3 text-center text-[10px]">System Alert Feed</h2>
+        <div class="bg-black/80 backdrop-blur-sm glitch-border rounded-none p-4 font-terminal-md text-[13px] h-48 overflow-y-auto flex flex-col gap-1 shadow-inner" id="alert-feed"></div>
+    </section>
+</main>
+
+<!-- Footer -->
+<footer class="bg-surface-container-lowest/95 backdrop-blur-md fixed bottom-0 w-full z-50 flex flex-col md:flex-row justify-between items-center px-4 md:px-8 py-2 min-h-[3.5rem] border-t border-primary-container/20">
+    <div class="font-terminal-md text-primary-container/70 text-[11px] font-bold tracking-[0.2em] italic">
+        SYSTEM STATUS: NOMINAL // CORE_ENGINE_v4.2
+    </div>
+    <nav class="flex gap-2 items-center mt-2 md:mt-0">
+        <a class="font-label-sm text-[10px] uppercase text-outline-variant hover:text-primary-container px-2 py-1 transition-colors" href="#">ALERTS</a>
+        <a class="font-label-sm text-[10px] uppercase text-outline-variant hover:text-primary-container px-2 py-1 transition-colors" href="#">LOGS</a>
+        <a class="font-label-sm text-[10px] uppercase text-primary-container font-black px-2 py-1 border-b border-primary-container" href="#">METRICS</a>
+        <a class="font-label-sm text-[10px] uppercase text-outline-variant hover:text-primary-container px-2 py-1 transition-colors" href="#">REPORTS</a>
+    </nav>
+</footer>
+
+<script>
+// ─── Simulated Data ──────────────────────────────────────────────────────
+const GAME_NAMES = [
+    "Cyberpunk 2077: Phantom Liberty", "Baldur's Gate 3", "Lethal Company",
+    "Helldivers 2", "Elden Ring: Shadow of the Erdtree", "Armored Core VI",
+    "Sekiro: Shadows Die Twice", "Starfield", "Remnant II", "Hollow Knight",
+    "Hades II", "Palworld", "Dragon's Dogma 2", "Final Fantasy VII Rebirth",
+    "Stardew Valley", "The Witcher 3", "God of War: Ragnarok", "Persona 5",
+    "Celeste", "Disco Elysium"
+];
+
+function rand(min, max) { return Math.random() * (max - min) + min; }
+function randInt(min, max) { return Math.floor(rand(min, max)); }
+function ts() {
+    const d = new Date();
+    return `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}.${d.getMilliseconds().toString().padStart(3,'0')}`;
+}
+
+// ─── Trending Items ─────────────────────────────────────────────────────
+function updateTrending() {
+    const el = document.getElementById("trending-list");
+    const items = GAME_NAMES.slice(0, 5).map((name, i) => {
+        const score = i < 4 ? randInt(200, 900) : -randInt(5, 50);
+        const cls = score < 0 ? "text-critical-red" : "text-primary-container font-bold";
+        const sign = score > 0 ? "+" : "";
+        return `<div class="flex items-center py-3 ${i < 4 ? 'border-b border-white/5' : ''} hover:bg-white/5 transition-colors">
+            <span class="font-metric-mono text-outline w-10 text-lg">${String(i+1).padStart(2,'0')}</span>
+            <div class="flex-1 font-body-md text-on-surface">${name}</div>
+            <span class="font-metric-mono ${cls}">${sign}${score}</span>
+        </div>`;
+    });
+    el.innerHTML = items.join("");
+}
+
+// ─── Recommendations ────────────────────────────────────────────────────
+function updateRecs() {
+    const userId = randInt(1000, 9999);
+    document.getElementById("rec-title").textContent = `Recommended for User #${userId}`;
+    const el = document.getElementById("rec-list");
+    const recs = GAME_NAMES.slice(5, 10).map((name, i) => {
+        const score = (0.95 - i * 0.08 + rand(-0.02, 0.02)).toFixed(3);
+        const color = parseFloat(score) > 0.7 ? "text-primary-container" : "text-on-surface";
+        const label = i === 0 ? `<span class="font-label-sm text-outline text-[9px] tracking-tighter">AFFINITY SCORE</span>` : "";
+        return `<div class="flex items-center py-3 ${i < 4 ? 'border-b border-white/5' : ''} hover:bg-white/5 transition-colors">
+            <span class="font-metric-mono text-outline w-10 opacity-30">#</span>
+            <div class="flex-1 font-body-md text-on-surface">${name}</div>
+            <div class="flex flex-col items-end">
+                <span class="font-metric-mono ${color} font-bold text-lg">${score}</span>
+                ${label}
+            </div>
+        </div>`;
+    });
+    el.innerHTML = recs.join("");
+}
+
+// ─── Alert Feed ─────────────────────────────────────────────────────────
+const LOG_TEMPLATES = [
+    { level: "INFO", msg: "Batch matrix factorization completed successfully. (Dur: {d}ms)" },
+    { level: "INFO", msg: "Emitting updated user vectors to Redis cache cluster." },
+    { level: "INFO", msg: "Kafka consumer group rebalance triggered for topic: game-events" },
+    { level: "WARNING", msg: "Consumer lag detected on partition {p}. Current offset delta: {o}." },
+    { level: "ALERT", msg: "Spark streaming context attempting to recover from lost executor." },
+    { level: "INFO", msg: "Executor recovered. Streaming window state restored from checkpoint." },
+    { level: "INFO", msg: "Model drift evaluated. Deviation ({v}) within acceptable bounds." },
+    { level: "WARNING", msg: "Item {id} rating spike > 4.5 in current window." },
+    { level: "ALERT", msg: "Sudden user activity spike detected for user #{u}." },
+    { level: "INFO", msg: "Window aggregation completed. {n} events processed in 30s window." },
+    { level: "INFO", msg: "Cold-start fallback triggered for user #-1. Serving segment Top-5." },
+];
+
+function addLogEntry() {
+    const feed = document.getElementById("alert-feed");
+    const tmpl = LOG_TEMPLATES[randInt(0, LOG_TEMPLATES.length)];
+    let msg = tmpl.msg
+        .replace("{d}", randInt(80, 250))
+        .replace("{p}", randInt(0, 4))
+        .replace("{o}", randInt(100, 3000))
+        .replace("{v}", rand(0.001, 0.05).toFixed(3))
+        .replace("{id}", randInt(1, 500))
+        .replace("{u}", randInt(1000, 9999))
+        .replace("{n}", randInt(50, 500));
+
+    let tag;
+    if (tmpl.level === "INFO") tag = '<span class="text-blue-300">[INFO]</span>';
+    else if (tmpl.level === "WARNING") tag = '<span class="bg-yellow-500 text-black px-1 font-bold mx-1">WARNING</span>';
+    else tag = '<span class="bg-critical-red text-white px-1 font-bold mx-1">ALERT</span>';
+
+    const line = document.createElement("div");
+    line.className = "text-on-surface/80";
+    line.innerHTML = `<span class="text-outline-variant font-bold">[${ts()}]</span> ${tag} ${msg}`;
+    feed.appendChild(line);
+    if (feed.children.length > 50) feed.removeChild(feed.firstChild);
+    feed.scrollTop = feed.scrollHeight;
+}
+
+// ─── Metrics Counters ───────────────────────────────────────────────────
+function updateMetrics() {
+    const tp = randInt(12000, 18000);
+    document.getElementById("throughput-value").textContent = tp.toLocaleString();
+    document.getElementById("throughput-delta").textContent = `+${rand(0.5, 5).toFixed(1)}% last 60s`;
+    const lat = rand(1.5, 4.5).toFixed(2);
+    document.getElementById("latency-value").textContent = `${lat}s`;
+    document.getElementById("latency-pct").textContent = `p99: ${(parseFloat(lat)+1.5).toFixed(1)}s // p95: ${(parseFloat(lat)+0.3).toFixed(1)}s`;
+    document.getElementById("users-value").textContent = randInt(5000, 12000).toLocaleString();
+}
+
+// ─── Charts ─────────────────────────────────────────────────────────────
+const chartDefaults = {
+    color: "#8B949E",
+    borderColor: "rgba(0,255,157,0.1)",
+};
+Chart.defaults.color = chartDefaults.color;
+Chart.defaults.borderColor = chartDefaults.borderColor;
+
+// Rating Distribution
+const ratingCtx = document.getElementById("ratingChart").getContext("2d");
+const ratingChart = new Chart(ratingCtx, {
+    type: "bar",
+    data: {
+        labels: ["1.0", "2.0", "3.0", "4.0", "5.0"],
+        datasets: [{
+            label: "Reviews",
+            data: [randInt(800,2000), randInt(1000,2500), randInt(2000,4000), randInt(4000,8000), randInt(6000,12000)],
+            backgroundColor: ["rgba(0,255,157,0.3)", "rgba(0,255,157,0.4)", "rgba(0,255,157,0.5)", "rgba(0,255,157,0.7)", "rgba(0,255,157,0.9)"],
+            borderColor: "#00ff9d",
+            borderWidth: 1,
+            borderRadius: 2,
+        }]
+    },
+    options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+            x: { grid: { color: "rgba(0,255,157,0.05)" } },
+            y: { grid: { color: "rgba(0,255,157,0.05)" }, beginAtZero: true }
+        }
+    }
+});
+
+// Engagement Score
+const engCtx = document.getElementById("engagementChart").getContext("2d");
+const engLabels = GAME_NAMES.slice(0, 10).map(n => n.length > 15 ? n.slice(0,15)+"…" : n);
+const engChart = new Chart(engCtx, {
+    type: "bar",
+    data: {
+        labels: engLabels,
+        datasets: [{
+            label: "Engagement Score",
+            data: engLabels.map(() => rand(0.5, 8)),
+            backgroundColor: "rgba(0,227,139,0.6)",
+            borderColor: "#00e38b",
+            borderWidth: 1,
+            borderRadius: 2,
+        }]
+    },
+    options: {
+        indexAxis: "y",
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+            x: { grid: { color: "rgba(0,255,157,0.05)" }, beginAtZero: true },
+            y: { grid: { color: "rgba(0,255,157,0.05)" }, ticks: { font: { size: 10 } } }
+        }
+    }
+});
+
+// Activity Timeline
+const actCtx = document.getElementById("activityChart").getContext("2d");
+const timeLabels = Array.from({length: 12}, (_, i) => {
+    const d = new Date(Date.now() - (11-i)*10000);
+    return `${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}`;
+});
+const actChart = new Chart(actCtx, {
+    type: "line",
+    data: {
+        labels: timeLabels,
+        datasets: [
+            { label: "User A", data: timeLabels.map(() => randInt(1,15)), borderColor: "#00ff9d", backgroundColor: "rgba(0,255,157,0.1)", fill: true, tension: 0.4, pointRadius: 2 },
+            { label: "User B", data: timeLabels.map(() => randInt(1,10)), borderColor: "#7B61FF", backgroundColor: "rgba(123,97,255,0.1)", fill: true, tension: 0.4, pointRadius: 2 },
+            { label: "User C", data: timeLabels.map(() => randInt(1,8)), borderColor: "#FF3366", backgroundColor: "rgba(255,51,102,0.05)", fill: false, tension: 0.4, pointRadius: 2 },
+        ]
+    },
+    options: {
+        responsive: true,
+        plugins: { legend: { labels: { boxWidth: 12, font: { size: 10, family: "JetBrains Mono" } } } },
+        scales: {
+            x: { grid: { color: "rgba(0,255,157,0.05)" }, ticks: { font: { size: 9 } } },
+            y: { grid: { color: "rgba(0,255,157,0.05)" }, beginAtZero: true, title: { display: true, text: "Interactions", font: { size: 10 } } }
+        }
+    }
+});
+
+// ─── Update Loops ───────────────────────────────────────────────────────
+function updateCharts() {
+    // Rating chart — slight fluctuation
+    ratingChart.data.datasets[0].data = ratingChart.data.datasets[0].data.map(v => Math.max(100, v + randInt(-200, 200)));
+    ratingChart.update("none");
+    // Engagement
+    engChart.data.datasets[0].data = engChart.data.datasets[0].data.map(() => rand(0.5, 8));
+    engChart.update("none");
+    // Activity — shift left, add new point
+    actChart.data.labels.shift();
+    const d = new Date();
+    actChart.data.labels.push(`${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}`);
+    actChart.data.datasets.forEach(ds => { ds.data.shift(); ds.data.push(randInt(1, 15)); });
+    actChart.update("none");
+}
+
+// Initial render
+updateTrending();
+updateRecs();
+for (let i = 0; i < 8; i++) addLogEntry();
+
+// Live updates
+setInterval(updateMetrics, 3000);
+setInterval(updateTrending, 5000);
+setInterval(updateRecs, 7000);
+setInterval(addLogEntry, 2000);
+setInterval(updateCharts, 3000);
+</script>
+</body>
+</html>

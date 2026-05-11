@@ -1,6 +1,6 @@
-# 🎮 Real-Time Game Recommendation System
+# 🎮 Project Nexus — Real-Time Game Recommender
 
-A complete end-to-end Big Data project implementing a Real-Time Game Recommendation System using **Apache Spark**, **Kafka**, and **Spark Structured Streaming** with personalized recommendations, cold-start handling, and user segmentation.
+An end-to-end Big Data pipeline for a video game recommendation system. Features real-time event streaming via Kafka, Spark Structured Streaming for windowed analytics, and a hybrid recommendation engine combining ALS collaborative filtering with KMeans user segmentation.
 
 ## 📋 Table of Contents
 - [Architecture](#architecture)
@@ -9,161 +9,164 @@ A complete end-to-end Big Data project implementing a Real-Time Game Recommendat
 - [Setup & Installation](#setup--installation)
 - [Running the Pipeline](#running-the-pipeline)
 - [Phase Details](#phase-details)
-- [Late Data Handling Policy](#late-data-handling-policy)
+- [Design Policies](#design-policies)
+- [Live Dashboard](#live-dashboard)
+
+---
 
 ## 🏗️ Architecture
 
+```mermaid
+graph TD
+    HF[HuggingFace Dataset] --> P1[Phase 1: Preprocessing]
+    P1 --> P2[Phase 2: ALS Training]
+    P2 --> P3[Phase 3: KMeans Segmentation]
+    
+    P3 --> P4[Phase 4: Kafka Producer]
+    P4 -->|JSON Events| P5[Phase 5: Streaming Pipeline]
+    
+    P5 -->|Memory Sinks| P7[Phase 7: Streamlit Dashboard]
+    P2 -->|ALS Model| P6[Phase 6: Rec Engine]
+    P3 -->|Segments| P6
+    P5 -->|Batch Data| P6
 ```
-[Amazon Dataset] → [PySpark Preprocessing] → [ALS Model Training]
-                                                      ↓
-[Kafka Producer] → [Kafka Topic: game-events] → [Spark Structured Streaming]
-     ↑                    (2 partitions)                   ↓
-[Sampled from               ↓                    [Window Analytics (30s/10s)]
- cleaned dataset]    [JSON parsing +                       ↓
-                      malformed handling]         [ML + Streaming Integration]
-                                                           ↓
-                                              [Recommendations + Alerts + Dashboard]
-```
+
+---
 
 ## 📊 Dataset
 
-**Amazon Video Games 5-core** (UCSD JMCAULEY)
-- **URL**: https://datarepos.ucsd.edu/dataset/amazon/Video_Games_5.json.gz
-- **Size**: ~500K+ records
-- **Schema**: `reviewerID`, `asin`, `overall` (1-5), `unixReviewTime`
+**McAuley-Lab/Amazon-Reviews-2023**
+- **Source**: HuggingFace (`raw_review_Video_Games`)
+- **Scale**: ~5M+ records (filtered during preprocessing)
+- **Schema**: `user_id`, `parent_asin` (item_id), `rating` (1-5), `timestamp` (Unix ms)
+
+---
 
 ## 📁 Project Structure
 
 ```
-MiniProject3/
-├── code/
-│   ├── preprocessing.py        # Phase 1: Data preprocessing
-│   ├── train_als.py            # Phase 2: ALS training + segmentation
-│   ├── kafka_producer.py       # Phase 3: Kafka event producer
-│   ├── streaming_pipeline.py   # Phase 4: Spark Structured Streaming
-│   ├── recommendation_engine.py # Phase 5: ML + streaming integration
-│   └── dashboard.py            # Phase 6: Streamlit dashboard
-├── models/
-│   ├── als_model/              # Trained ALS model
-│   ├── user_indexer/           # Fitted StringIndexer (users)
-│   └── item_indexer/           # Fitted StringIndexer (items)
+project-nexus/
 ├── data/
-│   ├── Video_Games_5.json      # Raw dataset (download required)
-│   ├── games_cleaned.parquet   # Cleaned & indexed data
-│   ├── user_segments.parquet   # User → segment mapping
-│   └── segment_top5.parquet    # Precomputed Top-5 per segment
+│   ├── games_cleaned.parquet   ← output of Phase 1
+│   ├── user_segments.parquet   ← output of Phase 3
+│   └── segment_top5.parquet    ← output of Phase 3
+├── models/
+│   ├── user_indexer/           ← fitted StringIndexer (Phase 1)
+│   ├── item_indexer/           ← fitted StringIndexer (Phase 1)
+│   ├── als_model/              ← trained ALS (Phase 2)
+│   └── kmeans_model/           ← trained KMeans (Phase 3)
+├── code/
+│   ├── preprocessing.py        ← Phase 1
+│   ├── train_als.py            ← Phase 2
+│   ├── train_kmeans.py         ← Phase 3
+│   ├── kafka_producer.py       ← Phase 4
+│   ├── streaming_pipeline.py   ← Phase 5
+│   ├── recommendation_engine.py← Phase 6
+│   └── dashboard.py            ← Phase 7 (Streamlit HUD)
+├── dashboard/
+│   └── index.html              ← Static HUD prototype (GitHub Pages)
+├── requirements.txt
 └── README.md
 ```
 
+---
+
 ## ⚙️ Setup & Installation
 
-### Prerequisites
+### 1. Prerequisites
 - Python 3.10+
 - Java 8/11 (for Spark)
-- Apache Kafka (running on localhost:9092)
+- Apache Kafka (running on `localhost:9092`)
 
-### Install Dependencies
-
+### 2. Install Dependencies
 ```bash
-pip install pyspark==3.5.0 kafka-python==2.0.2 pandas pyarrow streamlit plotly
+pip install -r requirements.txt
 ```
 
-### Download Dataset
-
-```bash
-# Download and extract the dataset
-wget https://datarepos.ucsd.edu/dataset/amazon/Video_Games_5.json.gz -O data/Video_Games_5.json.gz
-gzip -d data/Video_Games_5.json.gz
-```
-
-### Start Kafka
-
+### 3. Start Infrastructure (Kafka)
 ```bash
 # Start Zookeeper
-bin/zookeeper-server-start.sh config/zookeeper.properties
+zookeeper-server-start.sh config/zookeeper.properties
 
-# Start Kafka broker
-bin/kafka-server-start.sh config/server.properties
+# Start Kafka Broker
+kafka-server-start.sh config/server.properties
 ```
+
+---
 
 ## 🚀 Running the Pipeline
 
-Execute each phase sequentially:
+Execute phases in order across separate terminals:
 
 ```bash
-# Phase 1: Preprocess the dataset
+# STEP 1: Build Models & Data
 python code/preprocessing.py
-
-# Phase 2: Train ALS model + user segmentation
 python code/train_als.py
+python code/train_kmeans.py
 
-# Phase 3: Start Kafka producer (runs indefinitely)
+# STEP 2: Start Stream (Terminal 1)
 python code/kafka_producer.py
 
-# Phase 4: Start streaming pipeline (in a new terminal)
+# STEP 3: Start Pipeline (Terminal 2)
 python code/streaming_pipeline.py
 
-# Phase 5: Start recommendation engine (in a new terminal)
+# STEP 4: Start Rec Engine (Terminal 3)
 python code/recommendation_engine.py
 
-# Phase 6: Launch dashboard (in a new terminal)
+# STEP 5: Start Dashboard (Terminal 4)
 streamlit run code/dashboard.py
 ```
 
+---
+
 ## 📝 Phase Details
 
-### Phase 1 — Data Preprocessing
-- Loads raw JSON, selects/renames columns
-- Drops nulls, filters invalid ratings
-- Deduplicates (user, item) pairs keeping most recent
-- Applies StringIndexer for integer indices
-- Saves Parquet + indexer models
+### Phase 1 — Preprocessing
+- Downloads directly from HuggingFace.
+- Cleans data: drops nulls, filters ratings (1.0-5.0), deduplicates (keeps most recent).
+- Fits `StringIndexer` models for both users and items to ensure consistent integer mapping across the pipeline.
 
 ### Phase 2 — ALS Training
-- 80/20 train/test split (seed=42)
-- Initial ALS: rank=10, maxIter=10, regParam=0.1
-- Auto grid search if RMSE > 1.5
-- KMeans (k=5) user segmentation on latent factors
-- Precomputes segment Top-5 for cold-start fallback
+- Trains Alternating Least Squares on `(user_idx, item_idx, rating)`.
+- Implements hyperparameter grid search (Rank: 10-50, Reg: 0.01-0.5) if initial RMSE > 1.5.
 
-### Phase 3 — Kafka Producer
-- Replay-based simulation from cleaned data
-- 2 partitions (user_idx % 2)
-- 15% cold-start injection (user_id = -1)
-- 5% malformed record injection
+### Phase 3 — KMeans Segmentation
+- Extracts user latent factors from the ALS model.
+- Clusters users into 5 segments (Enthusiast, Critic, Casual, Explorer, Hardcore).
+- Precomputes segment-level Top-5 items for robust cold-start fallback.
 
-### Phase 4 — Structured Streaming
-- Reads from Kafka with safe JSON parsing
-- Dead-letter routing for malformed records
-- 30s window / 10s slide with 15s watermark
-- Engagement score: (count × avg_rating) / 30
-- Trending alerts (avg > 4.5, count > 3)
-- Activity spike alerts (count > 10)
+### Phase 4 — Kafka Producer
+- Replay-based simulator with 2 partitions (`user_idx % 2`).
+- Fault injection: 15% cold-start users, 5% malformed records.
 
-### Phase 5 — Recommendation Engine
-- Known users: ALS Top-5 + segment label
-- Cold-start: majority vote → segment fallback
-- Latency tracking (< 5s target)
+### Phase 5 — Streaming Pipeline
+- Spark Structured Streaming with safe JSON parsing and dead-letter routing.
+- Window analytics (30s window / 10s slide).
+- 15s Watermark policy (Late data dropped to prevent window skew).
 
-### Phase 6 — Dashboard
-- Auto-refreshes every 3 seconds
-- 5 panels: Metrics, Recommendations, Trending, Activity, Alerts
-- Premium glassmorphism dark theme
+### Phase 6 — Recommendation Engine
+- Hybrid Logic:
+  1. **Known Users**: ALS predictions filtered by user segment.
+  2. **Cold-Start (Known Segment)**: Segment-level Top-5 items.
+  3. **Cold-Start (New User)**: Global trending items from the live stream.
+- Latency Target: **< 5 seconds** per request.
 
-## 📐 Late Data Handling Policy
+### Phase 7 — Dashboard
+- Real-time HUD (Heads-Up Display) built with Streamlit.
+- Features: Throughput, Latency, Trending Leaderboard, Personalized Recommendations, and a Terminal Alert Feed.
+
+---
+
+## 📐 Design Policies
 
 | Parameter | Value | Rationale |
 |-----------|-------|-----------|
-| Watermark | 15 seconds | Data arriving >15s late is dropped |
-| Window | 30 seconds | Aggregation window duration |
-| Slide | 10 seconds | Window slide interval |
-| Policy | DROP | Late data (>15s) cannot fill a complete slide interval and would corrupt window boundaries. Dropping is preferable to processing stale data that may no longer reflect real user intent. |
+| Watermark | 15s | Half of slide (10s); late data cannot fill complete slides. |
+| Partitioning | `user_idx % 2` | Ensures user-locality for stateful operations. |
+| Cold-Start | Hybrid | Segment fallback for known archetypes; trending for absolute unknowns. |
 
-## 🛠️ Environment
+---
 
-- Python 3.10+
-- PySpark 3.5
-- kafka-python 2.0
-- Streamlit 1.35
-- Kafka broker: localhost:9092
-- Spark master: local[*]
+## 🌐 Live Dashboard
+A static prototype of the Gaming HUD is hosted on GitHub Pages:
+[https://cludoy.github.io/Mini-project3/](https://cludoy.github.io/Mini-project3/)

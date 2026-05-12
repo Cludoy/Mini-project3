@@ -32,6 +32,8 @@ __pycache__/
 *.pyc
 *.pyo
 .ipynb_checkpoints/
+.venv/
+venv/
 
 # IDE
 .vscode/

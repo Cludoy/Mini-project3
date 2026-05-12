@@ -326,48 +326,61 @@ def main():
             score = r["engagement_score"]
             sign = "+" if score > 0 else ""
             css = "neg" if score < 0 else ""
-            rows_html += f"""
-            <div class="lb-row">
-                <span class="lb-rank">{i:02d}</span>
-                <span class="lb-name">Item #{int(r['item_id'])}</span>
-                <span class="lb-score {css}">{sign}{score:.0f}</span>
-            </div>"""
-        st.markdown(f"""
-        <div class="glass-panel">
-            <div class="panel-header">
-                <span class="panel-title">Trending Items (Global Window)</span>
-                <span class="panel-tag pulse">UPDATING...</span>
-            </div>
-            {rows_html if rows_html else '<div style="color:#8B949E;text-align:center;padding:20px;">Waiting for data...</div>'}
-        </div>
-        """, unsafe_allow_html=True)
+            rows_html += (
+                f'<div class="lb-row">'
+                f'<span class="lb-rank">{i:02d}</span>'
+                f'<span class="lb-name">Item #{int(r["item_id"])}</span>'
+                f'<span class="lb-score {css}">{sign}{score:.0f}</span>'
+                f'</div>'
+            )
+        trending_body = rows_html or '<div style="color:#8B949E;text-align:center;padding:20px;">Waiting for data...</div>'
+        st.markdown(
+            '<div class="glass-panel">'
+            '<div class="panel-header">'
+            '<span class="panel-title">Trending Items (Global Window)</span>'
+            '<span class="panel-tag pulse">UPDATING...</span>'
+            '</div>'
+            + trending_body
+            + '</div>',
+            unsafe_allow_html=True,
+        )
 
     with right:
         rec_rows = ""
+        sample_user = None
         if events_df is not None and len(events_df) > 0:
             sample_user = events_df["user_id"].mode()[0]
             user_items = events_df[events_df["user_id"] == sample_user].nlargest(5, "rating")
-            for _, r in user_items.iterrows():
+            for idx, (_, r) in enumerate(user_items.iterrows()):
                 score = r["rating"] / 5.0
                 color = C['mint'] if score > 0.7 else C['text']
-                rec_rows += f"""
-                <div class="lb-row">
-                    <span class="lb-rank" style="opacity:0.3">#</span>
-                    <span class="lb-name">Item #{int(r['item_id'])}</span>
-                    <div style="text-align:right">
-                        <span class="lb-score" style="color:{color};font-size:1.1rem">{score:.3f}</span>
-                        {'<br><span style="font-family:JetBrains Mono;font-size:0.55rem;color:#849587;letter-spacing:-0.02em">AFFINITY SCORE</span>' if _ == user_items.index[0] else ''}
-                    </div>
-                </div>"""
-        st.markdown(f"""
-        <div class="glass-panel">
-            <div class="panel-header">
-                <span class="panel-title">Recommended for User #{int(sample_user) if events_df is not None and len(events_df) > 0 else '---'}</span>
-                <span class="panel-tag">ALS MODEL: V2.1</span>
-            </div>
-            {rec_rows if rec_rows else '<div style="color:#8B949E;text-align:center;padding:20px;">Waiting for data...</div>'}
-        </div>
-        """, unsafe_allow_html=True)
+                affinity_label = (
+                    '<br><span style="font-family:JetBrains Mono;font-size:0.55rem;'
+                    'color:#849587;letter-spacing:-0.02em">AFFINITY SCORE</span>'
+                    if idx == 0 else ''
+                )
+                rec_rows += (
+                    f'<div class="lb-row">'
+                    f'<span class="lb-rank" style="opacity:0.3">#</span>'
+                    f'<span class="lb-name">Item #{int(r["item_id"])}</span>'
+                    f'<div style="text-align:right">'
+                    f'<span class="lb-score" style="color:{color};font-size:1.1rem">{score:.3f}</span>'
+                    f'{affinity_label}'
+                    f'</div>'
+                    f'</div>'
+                )
+        user_label = f'#{int(sample_user)}' if sample_user is not None else '---'
+        rec_body = rec_rows or '<div style="color:#8B949E;text-align:center;padding:20px;">Waiting for data...</div>'
+        st.markdown(
+            '<div class="glass-panel">'
+            '<div class="panel-header">'
+            f'<span class="panel-title">Recommended for User {user_label}</span>'
+            '<span class="panel-tag">ALS MODEL: V2.1</span>'
+            '</div>'
+            + rec_body
+            + '</div>',
+            unsafe_allow_html=True,
+        )
 
     st.markdown("<br>", unsafe_allow_html=True)
 

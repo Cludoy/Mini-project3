@@ -92,6 +92,11 @@ Follow these steps to run the complete end-to-end pipeline in your local environ
 
 #### 1. Setup & Start Kafka (Native Windows)
 To bypass the notorious Windows path-length limit, Kafka must be extracted to a short directory name (e.g. `k/`).
+1. Download Apache Kafka (e.g., `kafka_2.13-3.x.x.tgz`) from the [official downloads page](https://kafka.apache.org/downloads).
+2. Extract the archive using a tool like 7-Zip or WinRAR.
+3. Rename the extracted folder (which contains subfolders like `bin`, `config`, etc.) simply to `k`.
+4. Place the `k` folder directly in the root of this project.
+
 Open two separate PowerShell terminal windows to start Zookeeper and Kafka:
 
 **Terminal 1:**

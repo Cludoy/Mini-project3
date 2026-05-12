@@ -1,5 +1,5 @@
 """
-Phase 5 — Native Python Streaming Pipeline (HADOOP-FREE)
+Native Python Streaming Pipeline (HADOOP-FREE)
 
 Reads from Kafka "game-events", parses JSON safely (dead-letter routing),
 applies windowed analytics (30s/10s), computes engagement scores, and
@@ -22,7 +22,7 @@ ALERTS_PATH = os.path.join(PROJECT_ROOT, "data", "alert_feed.csv")
 
 def main():
     print("=" * 55)
-    print("[PROJECT NEXUS — Phase 5: Native Streaming Pipeline]")
+    print("[PROJECT NEXUS — Native Streaming Pipeline]")
     print("=" * 55)
 
     print("\n[Connecting to Kafka Broker @ localhost:9092...]")
@@ -53,7 +53,7 @@ def main():
                 ts_str = data.get("timestamp")
                 
                 if user_id is None or item_id is None or rating is None or ts_str is None:
-                    print(f"[DEAD-LETTER] Malformed JSON: {raw_value}")
+                    # print(f"[DEAD-LETTER] Malformed JSON: {raw_value}")
                     continue
                     
                 rating = float(rating)
@@ -82,7 +82,9 @@ def main():
                     
                 df = pd.DataFrame(event_buffer)
                 
-                # Apply 15s watermark (drop older events)
+                # Watermark: drop events older than 15 s relative to the latest event time.
+                # Late data beyond this threshold is silently discarded (dead-lettered).
+                # This matches Spark Structured Streaming watermark semantics.
                 watermark_threshold = df["event_time"].max() - timedelta(seconds=15)
                 df = df[df["event_time"] >= watermark_threshold]
                 

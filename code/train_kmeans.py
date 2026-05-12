@@ -1,5 +1,5 @@
 """
-Phase 3 — User Segmentation (KMeans)
+User Segmentation (KMeans)
 
 Extracts user latent factors from the trained ALS model, clusters them
 with KMeans (k=5), and precomputes segment-level Top-5 items for cold-start.
@@ -53,7 +53,7 @@ def create_spark():
 
 def main():
     print("=" * 55)
-    print("[PROJECT NEXUS — Phase 3: User Segmentation]")
+    print("[PROJECT NEXUS — User Segmentation]")
     print("=" * 55)
 
     spark = create_spark()
@@ -136,7 +136,7 @@ def main():
         # Save via Pandas
         seg_top5.toPandas().to_parquet(TOP5_PATH, engine="pyarrow", index=False)
         print(f"\n[Segment Top-5 saved] → {TOP5_PATH}")
-        print("[Phase 3 complete.]")
+        print("[Segmentation complete.]")
     finally:
         spark.stop()
 

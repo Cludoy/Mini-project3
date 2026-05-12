@@ -1,5 +1,5 @@
 """
-Phase 4 — Kafka Producer
+Kafka Producer
 
 Replay-based simulation from cleaned dataset. Sends events to "game-events"
 topic with 2 partitions (partitioned by user_idx % 2).
@@ -49,7 +49,7 @@ def setup_topic():
 
 def main():
     print("=" * 55)
-    print("[PROJECT NEXUS — Phase 4: Kafka Producer]")
+    print("[PROJECT NEXUS — Kafka Producer]")
     print("=" * 55)
 
     setup_topic()

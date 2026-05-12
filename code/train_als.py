@@ -1,5 +1,5 @@
 """
-Phase 2 — ALS Model Training
+ALS Model Training
 
 Trains an ALS collaborative filtering model on the cleaned dataset.
 If initial RMSE > 1.5, runs a hyperparameter grid search with CrossValidator.
@@ -37,7 +37,7 @@ def create_spark():
 
 def main():
     print("=" * 55)
-    print("[PROJECT NEXUS — Phase 2: ALS Training]")
+    print("[PROJECT NEXUS — ALS Training]")
     print("=" * 55)
 
     spark = create_spark()
@@ -121,7 +121,7 @@ def main():
         print(f"   User factors: {model.userFactors.count():,}")
         print(f"   Item factors: {model.itemFactors.count():,}")
         print("=" * 55)
-        print("[Phase 2 complete.]")
+        print("[ALS Training complete.]")
     finally:
         spark.stop()
 

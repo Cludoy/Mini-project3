@@ -1,5 +1,5 @@
 """
-Phase 6 — ML + Streaming Integration (Hadoop-Free Architecture)
+ML + Streaming Integration (Hadoop-Free Architecture)
 
 Provides a recommendation engine that serves predictions for users in real-time.
 - Known users: Computes Top-5 predictions manually via dot-product of Pandas ALS factors.
@@ -138,7 +138,7 @@ class RecommendationEngine:
 
 def main():
     print("=" * 55)
-    print("[PROJECT NEXUS — Phase 6: Recommendation Engine Tests]")
+    print("[PROJECT NEXUS — Recommendation Engine Tests]")
     print("=" * 55)
     
     # We don't even need a fully configured Spark session for local tests anymore!

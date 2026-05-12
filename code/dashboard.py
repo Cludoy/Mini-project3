@@ -1,5 +1,5 @@
 """
-Phase 6 — Real-Time Dashboard (Streamlit)
+Real-Time Dashboard (Streamlit)
 Matches the Stitch "Project Nexus - Gaming HUD" design.
 Dark HUD theme with neon mint accents, monospace metrics, terminal alerts.
 Auto-refreshes every 3 seconds from Spark memory sink tables.
@@ -15,6 +15,19 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
+from recommendation_engine import RecommendationEngine
+from pyspark.sql import SparkSession
+
+@st.cache_resource
+def get_engine():
+    spark = (
+        SparkSession.builder
+        .appName("Dashboard-RecEngine")
+        .master("local[1]")
+        .config("spark.driver.memory", "2g")
+        .getOrCreate()
+    )
+    return RecommendationEngine(spark)
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -52,6 +65,20 @@ def read_csv_safe(path):
     return None
 
 
+@st.cache_data(ttl=300)   # reload titles at most once every 5 minutes
+def load_item_titles():
+    """Load item index to title mapping. Cached so it never blocks the 3-s fragment cycle."""
+    try:
+        path = os.path.join(PROJECT_ROOT, "data", "item_titles.parquet")
+        if os.path.exists(path):
+            df = pd.read_parquet(path)
+            # Shorten very long titles
+            return {row["item_idx"]: (row["title"][:40] + "..." if len(row["title"]) > 40 else row["title"]) for _, row in df.iterrows()}
+    except Exception:
+        pass
+    return {}
+
+
 def demo_data():
     """Generate realistic demo data when Spark isn't running."""
     now = datetime.now()
@@ -78,7 +105,13 @@ st.set_page_config(page_title="Real-Time ALS Recommender", page_icon="🎮", lay
                    initial_sidebar_state="collapsed")
 
 # ─── CSS: Stitch HUD Theme ──────────────────────────────────────────────────
-st.markdown(f"""
+
+
+
+
+def render_static():
+    """Runs once: injects CSS and draws the permanent header."""
+    st.markdown(f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=JetBrains+Mono:wght@400;500;700&family=Anybody:wght@700;800&display=swap');
 
@@ -251,17 +284,35 @@ st.markdown(f"""
     border-bottom: 1px solid {C['mint']};
 }}
 
-/* Hide Streamlit chrome */
+/* Hide Streamlit chrome and prevent graying out on rerun */
 #MainMenu {{visibility: hidden;}} footer {{visibility: hidden;}} header {{visibility: hidden;}}
 div[data-testid="stToolbar"] {{display: none;}}
+div[data-testid="stStatusWidget"] {{display: none;}}
+div[data-testid="stDecoration"] {{display: none;}}
+[data-testid="stAppViewBlockContainer"] {{opacity: 1 !important;}}
+[data-testid="stAppViewContainer"] {{opacity: 1 !important;}}
+div.block-container {{opacity: 1 !important; transition: none !important;}}
+.st-emotion-cache-16idsys p {{opacity: 1 !important;}}
+.st-emotion-cache-1cvow4s {{opacity: 1 !important;}}
 </style>
 """, unsafe_allow_html=True)
+    stream_label = "KAFKA STREAM: LIVE"
+    st.markdown(f"""
+    <div class="hud-header">
+        <div class="hud-title">Real-Time ALS Recommender</div>
+        <div class="hud-status"><div class="hud-dot"></div>{stream_label}</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-
-def main():
+@st.fragment(run_every=3)
+def live_panels():
     events_df = read_csv_safe(os.path.join(PROJECT_ROOT, "data", "live_events.csv"))
     analytics_df = read_csv_safe(os.path.join(PROJECT_ROOT, "data", "window_metrics.csv"))
     activity_df = read_csv_safe(os.path.join(PROJECT_ROOT, "data", "alert_feed.csv"))
+    titles_map = load_item_titles()
+    
+    def get_item_name(idx):
+        return titles_map.get(idx, f"Item #{idx}")
 
     if events_df is None:
         events_df, analytics_df, activity_df = demo_data()
@@ -273,17 +324,7 @@ def main():
     avg_rating = events_df["rating"].mean() if total_events > 0 else 0
     unique_users = events_df["user_id"].nunique() if total_events > 0 else 0
 
-    # ── Header ────────────────────────────────────────────────────────────
-    stream_label = "DEMO MODE" if is_demo else "KAFKA STREAM: LIVE"
-    st.markdown(f"""
-    <div class="hud-header">
-        <div class="hud-title">Real-Time ALS Recommender</div>
-        <div class="hud-status">
-            <div class="hud-dot"></div>
-            {stream_label}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+
 
     # ── Metric Cards ──────────────────────────────────────────────────────
     c1, c2, c3 = st.columns(3)
@@ -329,7 +370,7 @@ def main():
             rows_html += (
                 f'<div class="lb-row">'
                 f'<span class="lb-rank">{i:02d}</span>'
-                f'<span class="lb-name">Item #{int(r["item_id"])}</span>'
+                f'<span class="lb-name">{get_item_name(int(r["item_id"]))}</span>'
                 f'<span class="lb-score {css}">{sign}{score:.0f}</span>'
                 f'</div>'
             )
@@ -346,39 +387,52 @@ def main():
         )
 
     with right:
-        rec_rows = ""
-        sample_user = None
+        engine = get_engine()
+
+        # Pick the most active user in the current window, fall back to cold-start
         if events_df is not None and len(events_df) > 0:
-            sample_user = events_df["user_id"].mode()[0]
-            user_items = events_df[events_df["user_id"] == sample_user].nlargest(5, "rating")
-            for idx, (_, r) in enumerate(user_items.iterrows()):
-                score = r["rating"] / 5.0
-                color = C['mint'] if score > 0.7 else C['text']
-                affinity_label = (
-                    '<br><span style="font-family:JetBrains Mono;font-size:0.55rem;'
-                    'color:#849587;letter-spacing:-0.02em">AFFINITY SCORE</span>'
-                    if idx == 0 else ''
-                )
-                rec_rows += (
-                    f'<div class="lb-row">'
-                    f'<span class="lb-rank" style="opacity:0.3">#</span>'
-                    f'<span class="lb-name">Item #{int(r["item_id"])}</span>'
-                    f'<div style="text-align:right">'
-                    f'<span class="lb-score" style="color:{color};font-size:1.1rem">{score:.3f}</span>'
-                    f'{affinity_label}'
-                    f'</div>'
-                    f'</div>'
-                )
-        user_label = f'#{int(sample_user)}' if sample_user is not None else '---'
-        rec_body = rec_rows or '<div style="color:#8B949E;text-align:center;padding:20px;">Waiting for data...</div>'
+            sample_user = int(events_df["user_id"].mode()[0])
+        else:
+            sample_user = -1
+
+        result = engine.recommend_for_user(sample_user)
+        recs   = result["recommendations"]   # always 5 items
+        path   = result["path"]
+
+        rec_rows = ""
+        for idx, rec in enumerate(recs):
+            item_name  = get_item_name(int(rec["item_id"]))
+            score      = rec["score"]
+            # normalise ALS scores to 0–1 range for display
+            disp_score = min(abs(score) / 10.0, 1.0)
+            color      = C['mint'] if disp_score > 0.7 else C['text']
+            affinity_label = (
+                '<br><span style="font-family:JetBrains Mono;font-size:0.55rem;'
+                'color:#849587;letter-spacing:-0.02em">AFFINITY SCORE</span>'
+                if idx == 0 else ''
+            )
+            rec_rows += (
+                f'<div class="lb-row">'
+                f'<span class="lb-rank" style="opacity:0.3">#{idx+1}</span>'
+                f'<span class="lb-name">{item_name}</span>'
+                f'<div style="text-align:right">'
+                f'<span class="lb-score" style="color:{color};font-size:1.1rem">'
+                f'{disp_score:.3f}</span>'
+                f'{affinity_label}'
+                f'</div></div>'
+            )
+
+        user_label = f'#{sample_user}' if sample_user != -1 else 'COLD-START'
+        rec_body   = rec_rows or '<div style="color:#8B949E;text-align:center;padding:20px;">Waiting for data...</div>'
+        path_tag   = path.replace("_", " ").upper()
+
         st.markdown(
             '<div class="glass-panel">'
             '<div class="panel-header">'
             f'<span class="panel-title">Recommended for User {user_label}</span>'
-            '<span class="panel-tag">ALS MODEL: V2.1</span>'
+            f'<span class="panel-tag">{path_tag}</span>'
             '</div>'
-            + rec_body
-            + '</div>',
+            + rec_body + '</div>',
             unsafe_allow_html=True,
         )
 
@@ -399,7 +453,7 @@ def main():
                               margin=dict(l=20, r=20, t=10, b=30),
                               xaxis=dict(gridcolor="rgba(0,255,157,0.05)"),
                               yaxis=dict(gridcolor="rgba(0,255,157,0.05)"))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, key="chart_rating_dist")
 
     with ch2:
         st.markdown('<div class="section-title">Engagement Score · Top 10</div>', unsafe_allow_html=True)
@@ -413,7 +467,7 @@ def main():
                                margin=dict(l=20, r=20, t=10, b=30),
                                xaxis=dict(type="category", gridcolor="rgba(0,255,157,0.05)"),
                                yaxis=dict(gridcolor="rgba(0,255,157,0.05)"))
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2, use_container_width=True, key="chart_engagement_score")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -455,21 +509,14 @@ def main():
 
     st.markdown(f'<div class="terminal">{lines}</div>', unsafe_allow_html=True)
 
-    # ── Footer ────────────────────────────────────────────────────────────
-    st.markdown(f"""
-    <div class="hud-footer">
-        <div class="footer-status">SYSTEM STATUS: NOMINAL // CORE_ENGINE_v4.2</div>
-        <div class="footer-nav">
-            <a href="#">ALERTS</a> <a href="#">LOGS</a>
-            <a href="#" class="active">METRICS</a> <a href="#">REPORTS</a>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+
 
     # ── Auto-refresh ──────────────────────────────────────────────────────
-    time.sleep(REFRESH_INTERVAL)
-    st.rerun()
 
+
+def main():
+    render_static()
+    live_panels()
 
 if __name__ == "__main__":
     main()

@@ -1,5 +1,5 @@
 """
-Phase 1 — Data Acquisition & Preprocessing
+Data Acquisition & Preprocessing
 
 Downloads Amazon Video Games reviews from HuggingFace (McAuley-Lab/Amazon-Reviews-2023),
 cleans the data, applies StringIndexer mappings, and saves everything needed for downstream
@@ -148,13 +148,56 @@ def print_summary(df):
     for row in df.groupBy("rating").count().orderBy("rating").collect():
         pct = row["count"] / total * 100
         bar = "█" * int(pct / 2)
-        print(f"   * {row['rating']:.1f}  →  {row['count']:>8,}  ({pct:5.1f}%)  {bar}")
+        print(f"   * {row['rating']:.1f}  ->  {row['count']:>8,}  ({pct:5.1f}%)  {bar}")
     print("=" * 55)
+
+
+def extract_titles_from_meta(pandas_df):
+    """Download metadata and extract title mappings for dashboard."""
+    print("\n[Extracting item titles from metadata...]")
+    from huggingface_hub import hf_hub_download
+    import json
+    
+    try:
+        meta_file = hf_hub_download(
+            repo_id="McAuley-Lab/Amazon-Reviews-2023",
+            repo_type="dataset",
+            filename="raw/meta_categories/meta_Video_Games.jsonl",
+            local_dir=os.path.join(PROJECT_ROOT, "data")
+        )
+        
+        unique_items = pandas_df[['item_id', 'item_idx']].drop_duplicates().copy()
+        target_ids = set(unique_items['item_id'].tolist())
+        id_to_title = {}
+        
+        print("   [Processing metadata JSONL...]")
+        with open(meta_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                try:
+                    record = json.loads(line)
+                    parent_asin = record.get('parent_asin')
+                    if parent_asin in target_ids:
+                        title = record.get('title')
+                        if title:
+                            id_to_title[parent_asin] = title
+                        target_ids.remove(parent_asin)
+                    if not target_ids:
+                        break
+                except Exception:
+                    pass
+                    
+        unique_items['title'] = unique_items['item_id'].map(id_to_title).fillna(unique_items['item_id'])
+        out_path = os.path.join(PROJECT_ROOT, "data", "item_titles.parquet")
+        unique_items[['item_idx', 'title']].to_parquet(out_path, index=False)
+        print(f"   [Saved] Titles mapping → {out_path}")
+        
+    except Exception as e:
+        print(f"   [WARN] Could not extract titles: {e}")
 
 
 def main():
     print("=" * 55)
-    print("[PROJECT NEXUS — Phase 1: Preprocessing]")
+    print("[PROJECT NEXUS — Preprocessing]")
     print("=" * 55)
 
     spark = create_spark()
@@ -165,9 +208,13 @@ def main():
         print_summary(df)
 
         # Save using Pandas to completely bypass Hadoop's FileSystem
-        df.toPandas().to_parquet(CLEANED_PATH, engine="pyarrow", index=False)
+        pandas_df = df.toPandas()
+        pandas_df.to_parquet(CLEANED_PATH, engine="pyarrow", index=False)
         print(f"\n[Saved] → {CLEANED_PATH} (via Pandas/PyArrow)")
-        print("[Phase 1 complete.]")
+        
+        extract_titles_from_meta(pandas_df)
+        
+        print("[Preprocessing complete.]")
     finally:
         spark.stop()
 

@@ -14,15 +14,14 @@ import os
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
-from pyspark.ml.recommendation import ALSModel
 from pyspark.ml.clustering import KMeans
 from pyspark.ml.linalg import Vectors, VectorUDT
 from pyspark.sql.functions import udf
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
 CLEANED_PATH = os.path.join(PROJECT_ROOT, "data", "games_cleaned.parquet")
-ALS_MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "als_model")
-KMEANS_MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "kmeans_model")
+USER_FACTORS_PATH = os.path.join(PROJECT_ROOT, "data", "als_user_factors.parquet")
 SEGMENTS_PATH = os.path.join(PROJECT_ROOT, "data", "user_segments.parquet")
 TOP5_PATH = os.path.join(PROJECT_ROOT, "data", "segment_top5.parquet")
 
@@ -51,34 +50,32 @@ def create_spark():
 
 def main():
     print("=" * 55)
-    print("🎮 PROJECT NEXUS — Phase 3: User Segmentation")
+    print("[PROJECT NEXUS — Phase 3: User Segmentation]")
     print("=" * 55)
 
     spark = create_spark()
     try:
         # ── Load ALS model & extract user factors ─────────────────────
-        print(f"\n📦 Loading ALS model from {ALS_MODEL_PATH}")
-        als = ALSModel.load(ALS_MODEL_PATH)
-        print(f"   Rank: {als.rank}")
+        print(f"\n[Loading ALS user factors from {USER_FACTORS_PATH}]")
+        user_factors = spark.read.parquet(USER_FACTORS_PATH)
+        user_factors = user_factors.withColumnRenamed("id", "user_idx")
 
-        # userFactors: (id: int, features: array<float>)
+        # userFactors: (user_idx: int, features: array<float>)
         array_to_vector = udf(lambda arr: Vectors.dense(arr), VectorUDT())
-        user_factors = als.userFactors.withColumn(
+        user_factors = user_factors.withColumn(
             "features_vec", array_to_vector(F.col("features"))
         )
         print(f"   User factors: {user_factors.count():,} users")
 
         # ── KMeans clustering ─────────────────────────────────────────
-        print("\n🔬 Running KMeans (k=5)...")
+        print("\n[Running KMeans (k=5)...]")
         kmeans = KMeans(
             k=5, seed=SEED,
             featuresCol="features_vec",
             predictionCol="segment",
         )
         kmeans_model = kmeans.fit(user_factors)
-        kmeans_model.write().overwrite().save(KMEANS_MODEL_PATH)
-        print(f"   ✅ KMeans model saved → {KMEANS_MODEL_PATH}")
-
+        
         segmented = kmeans_model.transform(user_factors)
 
         # Build label map
@@ -87,7 +84,7 @@ def main():
         )
 
         user_segments = segmented.select(
-            F.col("id").alias("user_idx"),
+            F.col("user_idx"),
             F.col("segment"),
             label_map[F.col("segment")].alias("segment_label"),
         )
@@ -100,11 +97,12 @@ def main():
             bar = "█" * int(pct / 2)
             print(f"   [{row['segment']}] {row['segment_label']:<12} → {row['count']:>7,} ({pct:5.1f}%) {bar}")
 
-        user_segments.write.mode("overwrite").parquet(SEGMENTS_PATH)
-        print(f"\n💾 User segments saved → {SEGMENTS_PATH}")
+        # Save via Pandas
+        user_segments.toPandas().to_parquet(SEGMENTS_PATH, engine="pyarrow", index=False)
+        print(f"\n[User segments saved] → {SEGMENTS_PATH}")
 
         # ── Precompute Segment Top-5 ─────────────────────────────────
-        print("\n🏆 Precomputing segment Top-5 items...")
+        print("\n[Precomputing segment Top-5 items...]")
         df = spark.read.parquet(CLEANED_PATH)
         df_seg = df.join(user_segments.select("user_idx", "segment"), on="user_idx")
 
@@ -131,9 +129,10 @@ def main():
                 print(f"       #{r['rank']}  item_idx={r['item_idx']}  "
                       f"avg={r['avg_rating']:.2f}  ({r['n_ratings']} reviews)")
 
-        seg_top5.write.mode("overwrite").parquet(TOP5_PATH)
-        print(f"\n💾 Segment Top-5 saved → {TOP5_PATH}")
-        print("✅ Phase 3 complete.")
+        # Save via Pandas
+        seg_top5.toPandas().to_parquet(TOP5_PATH, engine="pyarrow", index=False)
+        print(f"\n[Segment Top-5 saved] → {TOP5_PATH}")
+        print("[Phase 3 complete.]")
     finally:
         spark.stop()
 

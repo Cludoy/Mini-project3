@@ -33,33 +33,33 @@ TOPIC = "game-events"
 
 def setup_topic():
     """Create topic with 2 partitions if it doesn't exist."""
-    print(f"\n📡 Ensuring topic '{TOPIC}' exists (2 partitions)...")
+    print(f"\n[Ensuring topic '{TOPIC}' exists (2 partitions)...]")
     try:
         admin = KafkaAdminClient(bootstrap_servers=KAFKA_BOOTSTRAP)
         admin.create_topics([NewTopic(name=TOPIC, num_partitions=2, replication_factor=1)])
-        print("   ✅ Topic created")
+        print("   [OK] Topic created")
     except TopicAlreadyExistsError:
-        print("   ℹ️  Topic already exists")
+        print("   [INFO] Topic already exists")
     except NoBrokersAvailable:
-        print(f"   ❌ No brokers at {KAFKA_BOOTSTRAP}. Start Kafka first.")
+        print(f"   [ERROR] No brokers at {KAFKA_BOOTSTRAP}. Start Kafka first.")
         sys.exit(1)
     except Exception as e:
-        print(f"   ⚠️  {e}")
+        print(f"   [WARN] {e}")
 
 
 def main():
     print("=" * 55)
-    print("🎮 PROJECT NEXUS — Phase 4: Kafka Producer")
+    print("[PROJECT NEXUS — Phase 4: Kafka Producer]")
     print("=" * 55)
 
     setup_topic()
 
     if not os.path.exists(CLEANED_PATH):
-        print(f"❌ {CLEANED_PATH} not found. Run preprocessing.py first.")
+        print(f"[ERROR] {CLEANED_PATH} not found. Run preprocessing.py first.")
         sys.exit(1)
 
     df = pd.read_parquet(CLEANED_PATH)[["user_idx", "item_idx", "rating"]]
-    print(f"\n📂 Loaded {len(df):,} records for replay")
+    print(f"\n[Loaded] {len(df):,} records for replay")
 
     producer = KafkaProducer(
         bootstrap_servers=KAFKA_BOOTSTRAP,
@@ -67,7 +67,7 @@ def main():
     )
 
     sent = cold = bad = 0
-    print(f"\n🚀 Producing to '{TOPIC}' — Ctrl+C to stop")
+    print(f"\n[Producing to '{TOPIC}' — Ctrl+C to stop]")
     print(f"   Cold-start: 15%  |  Malformed: 5%  |  Delay: 0.3–1.5s")
     print("-" * 55)
 
@@ -81,7 +81,7 @@ def main():
                          "rating": "N/A", "timestamp": "bad-ts"}
                 partition = random.randint(0, 1)
                 bad += 1
-                tag = "💀 MALFORMED"
+                tag = "[MALFORMED]"
 
             elif roll < 0.20:
                 # Cold-start user
@@ -93,7 +93,7 @@ def main():
                 }
                 partition = 0
                 cold += 1
-                tag = "🆕 COLD-START"
+                tag = "[COLD-START]"
 
             else:
                 # Normal replay
@@ -105,20 +105,20 @@ def main():
                     "timestamp": datetime.now().isoformat(),
                 }
                 partition = int(row["user_idx"]) % 2
-                tag = "✅ NORMAL"
+                tag = "[NORMAL]"
 
             producer.send(TOPIC, value=event, partition=partition)
             sent += 1
             print(f"   [{sent:>5}] {tag} | p={partition} | {event}")
 
             if sent % 50 == 0:
-                print(f"\n   📊 Total={sent} | Cold={cold} ({cold/sent*100:.0f}%) "
+                print(f"\n   [STATS] Total={sent} | Cold={cold} ({cold/sent*100:.0f}%) "
                       f"| Bad={bad} ({bad/sent*100:.0f}%)\n")
 
             time.sleep(random.uniform(0.3, 1.5))
 
     except KeyboardInterrupt:
-        print(f"\n🛑 Stopped after {sent} events (cold={cold}, bad={bad})")
+        print(f"\n[Stopped after {sent} events (cold={cold}, bad={bad})]")
     finally:
         producer.flush()
         producer.close()

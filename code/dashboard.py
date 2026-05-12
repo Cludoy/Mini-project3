@@ -277,10 +277,9 @@ div[data-testid="stToolbar"] {{display: none;}}
 def main():
     spark = get_spark()
 
-    # Try real data, fallback to demo
     events_df = query_table(spark, "live_events") if spark else None
-    analytics_df = query_table(spark, "window_analytics") if spark else None
-    activity_df = query_table(spark, "user_activity") if spark else None
+    analytics_df = query_table(spark, "window_metrics") if spark else None
+    activity_df = query_table(spark, "alert_feed") if spark else None
 
     if events_df is None:
         events_df, analytics_df, activity_df = demo_data()
@@ -436,14 +435,16 @@ def main():
         (8, "INFO", f"Model drift evaluated. Deviation ({random.uniform(0.001,0.05):.3f}) within acceptable bounds."),
     ]
     # Add real alerts from data
-    if analytics_df is not None and len(analytics_df) > 0:
-        trending = analytics_df[(analytics_df["avg_rating"] > 4.5) & (analytics_df["interaction_count"] > 3)]
-        for _, t in trending.head(3).iterrows():
-            logs.append((3, "WARNING", f"Item {int(t['item_id'])} rating spike > 4.5 (avg: {t['avg_rating']:.2f}, count: {int(t['interaction_count'])})"))
-    if activity_df is not None and len(activity_df) > 0:
-        spikes = activity_df[activity_df["interaction_count"] > 5]
-        for _, s in spikes.head(2).iterrows():
-            logs.append((7, "ALERT", f"Sudden user activity spike: User {int(s['user_id'])} — {int(s['interaction_count'])} interactions in window"))
+    if activity_df is not None and not activity_df.empty:
+        # alert_feed table contains columns: user_id, alert_type, message, timestamp
+        # Depending on schema from streaming_pipeline:
+        try:
+            for _, r in activity_df.tail(5).iterrows():
+                logs.append((7, "ALERT", f"{r['alert_type']}: User {r['user_id']}"))
+        except KeyError:
+            # Fallback if schema differs
+            for _, s in activity_df.head(2).iterrows():
+                logs.append((7, "ALERT", f"Sudden user activity spike: User {int(s.get('user_id', 0))}"))
 
     logs.sort(key=lambda x: x[0])
     lines = ""

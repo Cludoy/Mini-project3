@@ -22,8 +22,6 @@ from pyspark.ml.feature import StringIndexer
 # ─── Paths ───────────────────────────────────────────────────────────────────
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 CLEANED_PATH = os.path.join(PROJECT_ROOT, "data", "games_cleaned.parquet")
-USER_INDEXER_PATH = os.path.join(PROJECT_ROOT, "models", "user_indexer")
-ITEM_INDEXER_PATH = os.path.join(PROJECT_ROOT, "models", "item_indexer")
 
 
 def create_spark():
@@ -38,22 +36,24 @@ def create_spark():
 
 
 def download_dataset():
-    """Download Video Games reviews from HuggingFace — no account required."""
-    print("\n📥 Downloading dataset from HuggingFace...")
-    print("   McAuley-Lab/Amazon-Reviews-2023, subset: raw_review_Video_Games")
-    from datasets import load_dataset
+    """Download Video Games reviews from HuggingFace — bypassing the deprecated custom script."""
+    print("\n[Downloading dataset from HuggingFace...]")
+    print("   Source: McAuley-Lab/Amazon-Reviews-2023 (raw_review_Video_Games)")
+    from huggingface_hub import hf_hub_download
+    import os
 
-    ds = load_dataset(
-        "McAuley-Lab/Amazon-Reviews-2023",
-        "raw_review_Video_Games",
-        split="full",
-        trust_remote_code=True,
+    os.makedirs(os.path.join(PROJECT_ROOT, "data"), exist_ok=True)
+    local_file = hf_hub_download(
+        repo_id="McAuley-Lab/Amazon-Reviews-2023",
+        repo_type="dataset",
+        filename="raw/review_categories/Video_Games.jsonl",
+        local_dir=os.path.join(PROJECT_ROOT, "data")
     )
-    print(f"   Downloaded {len(ds):,} records")
-    return ds.to_pandas()
+    print(f"   [Downloaded] Saved to {local_file}")
+    return local_file
 
 
-def clean_and_transform(spark, pdf):
+def clean_and_transform(spark, local_file):
     """
     Clean raw data:
     1. Select & rename columns (parent_asin → item_id)
@@ -61,10 +61,14 @@ def clean_and_transform(spark, pdf):
     3. Filter: 1.0 ≤ rating ≤ 5.0
     4. Deduplicate (user_id, item_id) — keep most recent by timestamp
     """
-    print("\n🔧 Cleaning data...")
+    print("\n[Cleaning data...]")
 
-    # Convert to Spark DataFrame
-    df = spark.createDataFrame(pdf)
+    # Read with Spark directly from the local JSONL file
+    df = spark.read.json(local_file)
+    
+    # Take a 500k sample to speed up processing
+    print("   [Sampling 500,000 records...]")
+    df = df.limit(500000)
 
     # Select and rename
     df = df.select(
@@ -104,7 +108,7 @@ def apply_indexers(df):
     Map string IDs to integer indices using StringIndexer.
     Save fitted models so the streaming pipeline can reuse them.
     """
-    print("\n🔢 Fitting StringIndexers...")
+    print("\n[Fitting StringIndexers...]")
 
     # User indexer
     user_idx = StringIndexer(inputCol="user_id", outputCol="user_idx", handleInvalid="skip")
@@ -120,11 +124,8 @@ def apply_indexers(df):
     df = df.withColumn("user_idx", F.col("user_idx").cast("integer"))
     df = df.withColumn("item_idx", F.col("item_idx").cast("integer"))
 
-    # Save models
-    user_model.write().overwrite().save(USER_INDEXER_PATH)
-    print(f"   ✅ User indexer saved → {USER_INDEXER_PATH}")
-    item_model.write().overwrite().save(ITEM_INDEXER_PATH)
-    print(f"   ✅ Item indexer saved → {ITEM_INDEXER_PATH}")
+    # We do not save StringIndexerModels via Spark to avoid Hadoop/winutils errors on Windows.
+    # The string indexers are no longer required as downstream processes use the indexed integers.
 
     return df
 
@@ -136,7 +137,7 @@ def print_summary(df):
     items = df.select("item_id").distinct().count()
 
     print("\n" + "=" * 55)
-    print("📊 DATASET SUMMARY")
+    print("[DATASET SUMMARY]")
     print("=" * 55)
     print(f"   Total records:  {total:,}")
     print(f"   Unique users:   {users:,}")
@@ -147,13 +148,13 @@ def print_summary(df):
     for row in df.groupBy("rating").count().orderBy("rating").collect():
         pct = row["count"] / total * 100
         bar = "█" * int(pct / 2)
-        print(f"   ⭐ {row['rating']:.1f}  →  {row['count']:>8,}  ({pct:5.1f}%)  {bar}")
+        print(f"   * {row['rating']:.1f}  →  {row['count']:>8,}  ({pct:5.1f}%)  {bar}")
     print("=" * 55)
 
 
 def main():
     print("=" * 55)
-    print("🎮 PROJECT NEXUS — Phase 1: Preprocessing")
+    print("[PROJECT NEXUS — Phase 1: Preprocessing]")
     print("=" * 55)
 
     spark = create_spark()
@@ -163,9 +164,10 @@ def main():
         df = apply_indexers(df)
         print_summary(df)
 
-        df.write.mode("overwrite").parquet(CLEANED_PATH)
-        print(f"\n💾 Saved → {CLEANED_PATH}")
-        print("✅ Phase 1 complete.")
+        # Save using Pandas to completely bypass Hadoop's FileSystem
+        df.toPandas().to_parquet(CLEANED_PATH, engine="pyarrow", index=False)
+        print(f"\n[Saved] → {CLEANED_PATH} (via Pandas/PyArrow)")
+        print("[Phase 1 complete.]")
     finally:
         spark.stop()
 

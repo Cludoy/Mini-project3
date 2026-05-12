@@ -18,6 +18,7 @@ from pyspark.sql import functions as F
 from pyspark.sql.types import StructType, StructField, IntegerType, FloatType, StringType
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
 CHECKPOINT_DIR = os.path.join(PROJECT_ROOT, "checkpoints")
 
 
@@ -35,7 +36,7 @@ def create_spark():
 
 def main():
     print("=" * 55)
-    print("🎮 PROJECT NEXUS — Phase 5: Streaming Pipeline")
+    print("[PROJECT NEXUS — Phase 5: Streaming Pipeline]")
     print("=" * 55)
 
     spark = create_spark()
@@ -49,7 +50,7 @@ def main():
     ])
 
     # ── Read from Kafka ──────────────────────────────────────────────
-    print("\n📡 Subscribing to game-events @ localhost:9092")
+    print("\n[Subscribing to game-events @ localhost:9092]")
     raw = (
         spark.readStream
         .format("kafka")
@@ -153,7 +154,7 @@ def main():
     all_alerts = alerts.union(user_alerts)
 
     # ── Output Sinks ─────────────────────────────────────────────────
-    print("\n🚀 Starting streaming queries...")
+    print("\n[Starting streaming queries...]")
 
     queries = []
 
@@ -165,7 +166,7 @@ def main():
         .option("checkpointLocation", os.path.join(CHECKPOINT_DIR, "window_metrics"))
         .start()
     )
-    print("   ✅ window_metrics → memory sink")
+    print("   [OK] window_metrics → memory sink")
 
     # 2. Alerts → memory
     queries.append(
@@ -175,7 +176,7 @@ def main():
         .option("checkpointLocation", os.path.join(CHECKPOINT_DIR, "alert_feed"))
         .start()
     )
-    print("   ✅ alert_feed → memory sink")
+    print("   [OK] alert_feed → memory sink")
 
     # 3. Console output (demo)
     queries.append(
@@ -186,7 +187,7 @@ def main():
         .queryName("console_out")
         .start()
     )
-    print("   ✅ console output")
+    print("   [OK] console output")
 
     # 4. Dead letters → console
     queries.append(
@@ -197,7 +198,7 @@ def main():
         .queryName("dead_letter")
         .start()
     )
-    print("   ✅ dead_letter → console")
+    print("   [OK] dead_letter → console")
 
     # 5. Raw valid events → memory (for dashboard live feed)
     queries.append(
@@ -207,9 +208,9 @@ def main():
         .option("checkpointLocation", os.path.join(CHECKPOINT_DIR, "live_events"))
         .start()
     )
-    print("   ✅ live_events → memory sink")
+    print("   [OK] live_events → memory sink")
 
-    print(f"\n🟢 All {len(queries)} queries active. Ctrl+C to stop.")
+    print(f"\n[All {len(queries)} queries active. Ctrl+C to stop.]")
     spark.streams.awaitAnyTermination()
 
 

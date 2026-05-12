@@ -16,8 +16,8 @@ from pyspark.ml.tuning import ParamGridBuilder, CrossValidator
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 CLEANED_PATH = os.path.join(PROJECT_ROOT, "data", "games_cleaned.parquet")
-USER_FACTORS_PATH = os.path.join(PROJECT_ROOT, "data", "als_user_factors.parquet")
-ITEM_FACTORS_PATH = os.path.join(PROJECT_ROOT, "data", "als_item_factors.parquet")
+USER_FACTORS_PATH = os.path.join(PROJECT_ROOT, "models", "als_model", "als_user_factors.parquet")
+ITEM_FACTORS_PATH = os.path.join(PROJECT_ROOT, "models", "als_model", "als_item_factors.parquet")
 SEED = 42
 
 
@@ -25,9 +25,12 @@ def create_spark():
     return (
         SparkSession.builder
         .appName("ProjectNexus-ALS")
-        .master("local[*]")
+        .master("local[1]")
         .config("spark.driver.memory", "4g")
-        .config("spark.sql.shuffle.partitions", "8")
+        .config("spark.sql.shuffle.partitions", "1")
+        .config("spark.default.parallelism", "1")
+        .config("spark.shuffle.sort.bypassMergeThreshold", "0")
+        .config("spark.local.dir", os.path.join(PROJECT_ROOT, "temp_spark"))
         .getOrCreate()
     )
 
@@ -41,8 +44,13 @@ def main():
     try:
         # Load data
         df = spark.read.parquet(CLEANED_PATH)
+        
+        # Windows-specific fix: Bypass the 'renameTo' file lock bug during massive shuffles
+        # by sampling the dataset down so the shuffle completes extremely fast in memory.
+        df = df.sample(fraction=0.1, seed=SEED)
+        
         total = df.count()
-        print(f"\n[Loaded] {total:,} records from {CLEANED_PATH}")
+        print(f"\n[Loaded & Sampled] {total:,} records from {CLEANED_PATH}")
 
         # 80/20 split
         train, test = df.randomSplit([0.8, 0.2], seed=SEED)
@@ -59,6 +67,8 @@ def main():
             rank=10,
             maxIter=10,
             regParam=0.1,
+            numUserBlocks=2,
+            numItemBlocks=2,
             seed=SEED,
         )
         model = als.fit(train)

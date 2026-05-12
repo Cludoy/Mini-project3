@@ -21,9 +21,9 @@ from pyspark.sql.functions import udf
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 CLEANED_PATH = os.path.join(PROJECT_ROOT, "data", "games_cleaned.parquet")
-USER_FACTORS_PATH = os.path.join(PROJECT_ROOT, "data", "als_user_factors.parquet")
-SEGMENTS_PATH = os.path.join(PROJECT_ROOT, "data", "user_segments.parquet")
-TOP5_PATH = os.path.join(PROJECT_ROOT, "data", "segment_top5.parquet")
+USER_FACTORS_PATH = os.path.join(PROJECT_ROOT, "models", "als_model", "als_user_factors.parquet")
+SEGMENTS_PATH = os.path.join(PROJECT_ROOT, "models", "kmeans_model", "user_segments.parquet")
+TOP5_PATH = os.path.join(PROJECT_ROOT, "models", "kmeans_model", "segment_top5.parquet")
 
 SEED = 42
 
@@ -41,9 +41,12 @@ def create_spark():
     return (
         SparkSession.builder
         .appName("ProjectNexus-KMeans")
-        .master("local[*]")
+        .master("local[1]")
         .config("spark.driver.memory", "4g")
-        .config("spark.sql.shuffle.partitions", "8")
+        .config("spark.sql.shuffle.partitions", "1")
+        .config("spark.default.parallelism", "1")
+        .config("spark.shuffle.sort.bypassMergeThreshold", "0")
+        .config("spark.local.dir", os.path.join(PROJECT_ROOT, "temp_spark"))
         .getOrCreate()
     )
 
@@ -61,9 +64,10 @@ def main():
         user_factors = user_factors.withColumnRenamed("id", "user_idx")
 
         # userFactors: (user_idx: int, features: array<float>)
-        array_to_vector = udf(lambda arr: Vectors.dense(arr), VectorUDT())
+        from pyspark.ml.functions import array_to_vector as ml_array_to_vector
+        # Native JVM function completely bypasses the Python worker UDF crash
         user_factors = user_factors.withColumn(
-            "features_vec", array_to_vector(F.col("features"))
+            "features_vec", ml_array_to_vector(F.col("features"))
         )
         print(f"   User factors: {user_factors.count():,} users")
 

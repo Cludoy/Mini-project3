@@ -82,6 +82,17 @@ project-nexus/
 ## ⚙️ Environment & Setup
 
 - **Python**: 3.10+
-- **Frameworks**: PySpark 3.5, Kafka-python 2.0, Streamlit 1.35
+- **Frameworks**: PySpark 3.5, Kafka-python-ng, Streamlit 1.35
 - **Infrastructure**: Kafka broker at `localhost:9092`, Spark master at `local[*]`
 - **SLA**: Target recommendation latency < 5.0 seconds.
+
+### Native Windows Kafka Setup
+To bypass the notorious Windows path-length limit, Kafka must be extracted to a short directory name (e.g. `k/`).
+1. **Start Zookeeper:**
+   ```powershell
+   .\k\bin\windows\zookeeper-server-start.bat .\k\config\zookeeper.properties
+   ```
+2. **Start Kafka Broker:**
+   ```powershell
+   .\k\bin\windows\kafka-server-start.bat .\k\config\server.properties
+   ```

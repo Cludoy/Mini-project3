@@ -17,10 +17,10 @@ from pyspark.sql import SparkSession
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-USER_FACTORS_PATH = os.path.join(PROJECT_ROOT, "data", "als_user_factors.parquet")
-ITEM_FACTORS_PATH = os.path.join(PROJECT_ROOT, "data", "als_item_factors.parquet")
-SEGMENTS_PATH = os.path.join(PROJECT_ROOT, "data", "user_segments.parquet")
-TOP5_PATH = os.path.join(PROJECT_ROOT, "data", "segment_top5.parquet")
+USER_FACTORS_PATH = os.path.join(PROJECT_ROOT, "models", "als_model", "als_user_factors.parquet")
+ITEM_FACTORS_PATH = os.path.join(PROJECT_ROOT, "models", "als_model", "als_item_factors.parquet")
+SEGMENTS_PATH = os.path.join(PROJECT_ROOT, "models", "kmeans_model", "user_segments.parquet")
+TOP5_PATH = os.path.join(PROJECT_ROOT, "models", "kmeans_model", "segment_top5.parquet")
 
 
 class RecommendationEngine:

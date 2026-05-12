@@ -40,29 +40,13 @@ C = {
 SEGMENT_LABELS = {0: "Casual", 1: "Enthusiast", 2: "Critic", 3: "Hardcore", 4: "Explorer"}
 
 
-def get_spark():
-    """Get or create SparkSession shared with streaming pipeline."""
+def read_csv_safe(path):
+    """Safely query a CSV sink table → Pandas DataFrame."""
     try:
-        from pyspark.sql import SparkSession
-        return (
-            SparkSession.builder
-            .appName("GameRec-Dashboard")
-            .master("local[*]")
-            .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0")
-            .config("spark.driver.memory", "2g")
-            .getOrCreate()
-        )
-    except Exception:
-        return None
-
-
-def query_table(spark, name):
-    """Safely query a Spark memory sink table → Pandas DataFrame."""
-    try:
-        if spark and spark.catalog.tableExists(name):
-            df = spark.sql(f"SELECT * FROM {name}")
-            if df.count() > 0:
-                return df.toPandas()
+        if os.path.exists(path):
+            df = pd.read_csv(path)
+            if not df.empty:
+                return df
     except Exception:
         pass
     return None
@@ -275,11 +259,9 @@ div[data-testid="stToolbar"] {{display: none;}}
 
 
 def main():
-    spark = get_spark()
-
-    events_df = query_table(spark, "live_events") if spark else None
-    analytics_df = query_table(spark, "window_metrics") if spark else None
-    activity_df = query_table(spark, "alert_feed") if spark else None
+    events_df = read_csv_safe(os.path.join(PROJECT_ROOT, "data", "live_events.csv"))
+    analytics_df = read_csv_safe(os.path.join(PROJECT_ROOT, "data", "window_metrics.csv"))
+    activity_df = read_csv_safe(os.path.join(PROJECT_ROOT, "data", "alert_feed.csv"))
 
     if events_df is None:
         events_df, analytics_df, activity_df = demo_data()

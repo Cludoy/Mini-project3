@@ -86,13 +86,56 @@ project-nexus/
 - **Infrastructure**: Kafka broker at `localhost:9092`, Spark master at `local[*]`
 - **SLA**: Target recommendation latency < 5.0 seconds.
 
-### Native Windows Kafka Setup
+### Quick Start Guide
+
+Follow these steps to run the complete end-to-end pipeline in your local environment.
+
+#### 1. Setup & Start Kafka (Native Windows)
 To bypass the notorious Windows path-length limit, Kafka must be extracted to a short directory name (e.g. `k/`).
-1. **Start Zookeeper:**
-   ```powershell
-   .\k\bin\windows\zookeeper-server-start.bat .\k\config\zookeeper.properties
-   ```
-2. **Start Kafka Broker:**
-   ```powershell
-   .\k\bin\windows\kafka-server-start.bat .\k\config\server.properties
-   ```
+Open two separate PowerShell terminal windows to start Zookeeper and Kafka:
+
+**Terminal 1:**
+```powershell
+.\k\bin\windows\zookeeper-server-start.bat .\k\config\zookeeper.properties
+```
+
+**Terminal 2:**
+```powershell
+.\k\bin\windows\kafka-server-start.bat .\k\config\server.properties
+```
+
+#### 2. Data Preparation & Model Training
+Open a new terminal (Terminal 3). First, ensure your dependencies from `requirements.txt` are installed. Then, run the batch processing and ML scripts to prepare the needed artifacts:
+
+```powershell
+# 1. Download and preprocess data (saves to data/live_events.csv, etc.)
+python code/preprocessing.py
+
+# 2. Train the ALS recommendation model
+python code/train_als.py
+
+# 3. Compute user K-Means segments for cold-start fallbacks
+python code/train_kmeans.py
+```
+
+#### 3. Run the Streaming Pipeline
+In Terminal 3 (or a new terminal), start the Native Python Stream Processor. It listens to Kafka, calculates analytics, and produces metrics:
+
+```powershell
+python code/streaming_pipeline.py
+```
+
+#### 4. Start the Kafka Producer
+Open Terminal 4. Start the Kafka producer to simulate a live stream of gaming events from our cleaned dataset.
+
+```powershell
+python code/kafka_producer.py
+```
+
+#### 5. Launch the Live HUD Dashboard
+Open Terminal 5. Run the Streamlit application to visualize the live streaming metrics and real-time recommendations.
+
+```powershell
+streamlit run code/dashboard.py
+```
+After running this command, your browser should automatically open at `http://localhost:8501`.
